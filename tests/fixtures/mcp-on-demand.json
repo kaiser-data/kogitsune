@@ -1,0 +1,6 @@
+{
+  "mcpServers": {
+    "supabase": { "type": "stdio", "command": "mcp-server-supabase", "args": ["--project-ref", "abc"] },
+    "notion":   { "command": "npx", "args": ["-y", "server-notion"], "env": { "NOTION_API_KEY": "x" } }
+  }
+}

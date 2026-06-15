@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+# kogitsune 🦊 — pack your kit, send the little fox off light.
+# Usage:
+#   kit                 interactive picker (fzf)
+#   kit <name>          launch a named kit (lean|db|n8n|frontend|research|…)
+#   kit <name> -- ARGS  forward ARGS to `claude` (e.g. kit db -- --model opus "fix X")
+#   kit ls              list kits + à la carte catalog
+#   kit show <name>     show what a kit packs (dry run, no launch)
+#   kit doctor          check deps, config, auth, and measured savings
+#   kit help
+set -euo pipefail
+
+HERE="$(cd "$(dirname "$(readlink "${BASH_SOURCE[0]}" || echo "${BASH_SOURCE[0]}")")" && pwd)"
+ROOT="$(cd "$HERE/.." && pwd)"
+LIB="$ROOT/lib"
+# shellcheck source=lib/session-env.sh
+source "$LIB/session-env.sh"
+
+CONFIG="${KOGITSUNE_CONFIG:-}"
+[[ -z "$CONFIG" && -f "$ROOT/kits.yaml" ]] && CONFIG="$ROOT/kits.yaml"
+[[ -z "$CONFIG" && -f "./kits.yaml" ]] && CONFIG="./kits.yaml"
+if [[ -z "$CONFIG" ]]; then
+  CONFIG="$ROOT/examples/kits.example.yaml"
+  echo "kit: no kits.yaml found — using examples/kits.example.yaml (copy it to kits.yaml to customize)" >&2
+fi
+MCP_ON_DEMAND="${KOGITSUNE_MCP_ON_DEMAND:-$HOME/.claude/mcp-on-demand.json}"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/kogitsune"
+STATE_FILE="$STATE_DIR/last-kits.json"
+
+die() { echo "kit: $*" >&2; exit 1; }
+need() { command -v "$1" >/dev/null 2>&1 || die "missing dependency: $1"; }
+bc() { python3 "$LIB/build-config.py" --config "$CONFIG" --mcp-on-demand "$MCP_ON_DEMAND" "$@"; }
+ce() { python3 "$LIB/context-est.py" "$@"; }
+
+remember_kit() {  # $1=kit
+  mkdir -p "$STATE_DIR"
+  local cwd; cwd="$(pwd)"
+  local cur="{}"; [[ -f "$STATE_FILE" ]] && cur="$(cat "$STATE_FILE")"
+  echo "$cur" | jq --arg k "$1" --arg d "$cwd" '.[$d] = $k' > "$STATE_FILE" 2>/dev/null || true
+}
+
+pack_weight_line() {  # $1=manifest.json
+  local w; w="$(jq -r '.weight' "$1")"
+  ce --weights "$w"
+}
+
+# ---- launch a resolved selection -------------------------------------------
+# $1 = manifest path (already written, with mcp_config_path), rest = claude args
+launch_from_manifest() {
+  local manifest="$1"; shift
+  jq -e '.warnings|length>0' "$manifest" >/dev/null 2>&1 && \
+    jq -r '.warnings[] | "kit: warning — \(.)"' "$manifest" >&2 || true
+  local mcp_path; mcp_path="$(jq -r '.mcp_config_path' "$manifest")"
+  local mirror; mirror="$(kog_build_mirror "$manifest")"
+  trap 'kog_cleanup "$mirror"' EXIT INT TERM
+  echo "🦊 $(pack_weight_line "$manifest")" >&2
+  [[ -n "${KIT_DEBUG:-}" ]] && { echo "kit: mirror=$mirror (KIT_DEBUG set — not auto-cleaned)" >&2; trap - EXIT; }
+  CLAUDE_CONFIG_DIR="$mirror" exec claude \
+    --strict-mcp-config --mcp-config "$mcp_path" "$@"
+}
+
+resolve_to_manifest() {  # writes manifest to a temp file, echoes its path. args: bc selection flags
+  local out; out="$(mktemp -d "${TMPDIR:-/tmp}/kogitsune.sel.XXXXXX")"
+  bc "$@" --out-dir "$out" > "$out/manifest.json"
+  echo "$out/manifest.json"
+}
+
+cmd_launch() {  # $1=kit name, rest=claude passthrough
+  local kit="$1"; shift || true
+  need python3; need jq; need claude
+  local manifest; manifest="$(resolve_to_manifest "$kit")"
+  remember_kit "$kit"
+  launch_from_manifest "$manifest" "$@"
+}
+
+cmd_show() {
+  need python3
+  local kit="${1:?usage: kit show <name>}"
+  bc "$kit" --dry-run | jq '{kit, weight, mcp: (.mcp_config.mcpServers|keys),
+       plugins: (.plugins|keys), skills: (.skills|map(split("/")|last)),
+       imports: (.imports|map(split("/")|last)), warnings}'
+  echo "🦊 $(bc "$kit" --dry-run 2>/dev/null | jq -r .weight | xargs -I{} python3 "$LIB/context-est.py" --weights {})"
+}
+
+cmd_ls() {
+  need python3
+  bc --list | jq -r '
+    "KITS:", (.kits|to_entries[]|"  \(.key)"),
+    "", "MCP (à la carte):", (.mcp|to_entries[]|"  \(.value.tag // "") \(.key)  ~\(.value.weight // 0)"),
+    "", "SKILLS (à la carte):", (.skills|to_entries[]|"  \(.value.tag // "") \(.key)  ~\(.value.weight // 0)"),
+    "", "PINNED (always on): \(.pinned|join(", "))"'
+}
+
+cmd_doctor() {
+  echo "kogitsune doctor 🦊"
+  for d in python3 jq claude fzf; do
+    if command -v "$d" >/dev/null 2>&1; then echo "  ✔ $d"; else echo "  ✘ $d (missing)"; fi
+  done
+  python3 -c "import yaml" 2>/dev/null && echo "  ✔ PyYAML" || echo "  ✘ PyYAML (pip install pyyaml)"
+  [[ -f "$CONFIG" ]] && echo "  ✔ config: $CONFIG" || echo "  ✘ config missing"
+  [[ -f "$MCP_ON_DEMAND" ]] && echo "  ✔ mcp-on-demand: $MCP_ON_DEMAND" || echo "  • mcp-on-demand: none (inline defs only)"
+  if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then echo "  ✔ auth: ANTHROPIC_API_KEY set (creds copy skipped)";
+  elif security find-generic-password -s "Claude Code-credentials" -w >/dev/null 2>&1; then echo "  ✔ auth: keychain credentials readable";
+  else echo "  ✘ auth: no API key and keychain unreadable — run 'claude /login'"; fi
+  echo "  config validity:"; bc --list >/dev/null 2>&1 && echo "    ✔ parses" || echo "    ✘ parse error"
+}
+
+cmd_picker() {
+  need fzf; need python3; need jq
+  local list; list="$(bc --list)"
+  local kits; kits="$(echo "$list" | jq -r '.kits|keys[]' | sed 's/^/kit:   /')"
+  local mcp;  mcp="$(echo "$list" | jq -r '.mcp|to_entries[]|"mcp:   \(.value.tag // "") \(.key)"')"
+  local skl;  skl="$(echo "$list" | jq -r '.skills|to_entries[]|"skill: \(.value.tag // "") \(.key)"')"
+  echo "🦊 pinned (always on): $(echo "$list" | jq -r '.pinned|join(", ")')" >&2
+  local pick
+  pick="$(printf '%s\n%s\n%s\n' "$kits" "$mcp" "$skl" | \
+    fzf --multi --prompt='pack › ' --height=60% --border \
+        --header='space: toggle à la carte · enter: go · pick ONE kit:* or combine mcp:/skill:' )" || exit 0
+  [[ -z "$pick" ]] && exit 0
+  # a chosen kit:* wins; otherwise gather à la carte mcp/skill selections
+  local kitname; kitname="$(echo "$pick" | awk '/^kit:/{print $2; exit}')"
+  if [[ -n "$kitname" ]]; then cmd_launch "$kitname"; return; fi
+  local mcps skills
+  mcps="$(echo "$pick" | awk '/^mcp:/{print $NF}' | paste -sd, -)"
+  skills="$(echo "$pick" | awk '/^skill:/{print $NF}' | paste -sd, -)"
+  need claude
+  local manifest; manifest="$(resolve_to_manifest --mcp "$mcps" --skills "$skills")"
+  launch_from_manifest "$manifest"
+}
+
+main() {
+  local cmd="${1:-}"
+  case "$cmd" in
+    ""|pick|picker)        cmd_picker ;;
+    ls|list)               cmd_ls ;;
+    show)                  shift; cmd_show "$@" ;;
+    doctor)                cmd_doctor ;;
+    help|-h|--help)        sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//' ;;
+    *)
+      # kit <name> [-- claude args]
+      local kit="$cmd"; shift
+      [[ "${1:-}" == "--" ]] && shift
+      cmd_launch "$kit" "$@"
+      ;;
+  esac
+}
+main "$@"

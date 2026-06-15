@@ -55,8 +55,38 @@ baseline is ~24k), but it's worthless if the session can't authenticate.
 Pursue **option 1 (materialize creds into the mirror)** as the default, with **option 2
 (`ANTHROPIC_API_KEY`)** as an automatic fast-path when the env var is present. Both keep the
 curated-mirror architecture — which we proved works for skills + plugins + memory-hooks — and
-only add a guarded, opt-in credential copy. Requires a one-time user consent / permission rule
-for the keychain read. Confirm before building the launcher around it.
+only add a guarded, opt-in credential copy.
+
+## RESOLVED — auth fix validated ✅
+Materializing the keychain credential into `$MIRROR/.credentials.json` (mode 600) makes the
+isolated session authenticate:
+
+```
+mirror skills=graphify  plugins={"claude-mem@thedotmack":true}
+creds: 1481 bytes, perms 600
+✅ AUTH OK  ctx=23464 tokens  result=PONG   (mirror + creds deleted on exit)
+```
+
+Implemented in `lib/session-env.sh` as `kog_materialize_creds` (API-key fast-path skips the
+keychain entirely; otherwise `security find-generic-password -s "Claude Code-credentials" -w`
+→ 600 file → `trap` cleanup on EXIT/INT/TERM).
+
+## REALITY CHECK — savings scale with what you'd otherwise load
+Lean mirror = **23,464** ctx vs baseline **24,154** → only **~690 tokens (~3%)** here. Why: this
+machine had **already demoted all MCP servers to on-demand** (`mcp-on-demand.json`) and has few
+user skills, so the baseline wasn't paying for them either. The ~23.5K floor is dominated by
+**pinned claude-mem memory injection + the global guardrails + base tools** — all by design.
+
+Takeaway: kogitsune's win is proportional to your *global* load. Heavy global MCP + many skills →
+big cut. Already-lean global → small marginal cut, but kogitsune is what lets you keep that lean
+default and pull heavy kits back in only when needed. (Plugin-context leak #35713 also caps the
+floor.) A `kit measure` command can record real per-kit ctx tokens to calibrate the weight bar.
+
+## Open follow-ups
+- OAuth token **refresh write-back** lands in the disposable mirror, not the real keychain — long
+  sessions that refresh won't persist the new token. Usually fine (refresh tokens are long-lived);
+  document it.
+- Project-scope skills (`<cwd>/.claude/skills/`) still load regardless of the mirror — by design.
 
 ## Reproduce
 `bash docs/spike/run-spike.sh` (full) or `docs/spike/rerun.sh` (auth-focused). Artifacts land

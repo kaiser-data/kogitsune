@@ -6,5 +6,10 @@ kits.yaml
 .kogitsune-session-*.json
 tmp/
 
+# python
+__pycache__/
+*.pyc
+.pytest_cache/
+
 # os
 .DS_Store
