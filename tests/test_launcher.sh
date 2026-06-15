@@ -85,6 +85,27 @@ make_claude 7
 make_claude 0
 clean_tmp
 
+echo "== picker (stubbed fzf, TSV rows) =="
+cat > "$BIN/fzf_kit" <<'EOF'
+#!/usr/bin/env bash
+input="$(cat)"; echo ""; echo "$input" | awk -F'\t' '$2=="kit"&&$3=="db"'
+EOF
+chmod +x "$BIN/fzf_kit"
+out="$(KIT_DRY_RUN=1 KOGITSUNE_FZF="$BIN/fzf_kit" "$ROOT/bin/kit" 2>&1)"
+echo "$out" | grep -q "kit=db" && ok "picker launches the selected kit" || no "picker kit-select: $(echo "$out" | tail -1)"
+clean_tmp
+cat > "$BIN/fzf_alc" <<'EOF'
+#!/usr/bin/env bash
+input="$(cat)"; echo ""; echo "$input" | awk -F'\t' '($2=="mcp"&&$3=="supabase")||($2=="skill"&&$3=="postgres-bp")'
+EOF
+chmod +x "$BIN/fzf_alc"
+out="$(KIT_DRY_RUN=1 KOGITSUNE_FZF="$BIN/fzf_alc" "$ROOT/bin/kit" 2>&1)"
+echo "$out" | grep -q "mcp=supabase" && ok "picker à la carte resolves the selection" || no "picker à la carte: $(echo "$out" | tail -1)"
+clean_tmp
+# capture first (don't pipe kit into grep -q: its early exit SIGPIPEs kit under pipefail)
+pv="$("$ROOT/bin/kit" __preview "$(printf 'x\tmcp\tnotion\t4000')" "$(printf 'x\tskill\tpg\t2000')" 2>/dev/null)"
+printf '%s\n' "$pv" | grep -q "7.2K" && ok "preview sums selected weights (+baseline)" || no "preview weight sum"
+
 echo "== completion helpers =="
 ln -sf "$ROOT/bin/kit" "$BIN/kit"   # so completion's `kit __kits` resolves on PATH
 "$BIN/kit" __kits 2>/dev/null | grep -qx "db" && ok "__kits lists kit names" || no "__kits missing 'db'"

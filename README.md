@@ -56,25 +56,22 @@ kit lean       # memory + guardrails only — the leanest possible start
 kit db -- --model opus "optimize this query"   # forward args straight to claude
 ```
 
+The picker is a live two-pane `fzf` view — pick a kit *or* toggle à la carte items, and the
+preview pane totals the pack weight as you go:
+
 ```
-╭──────────────────────────────────────────────────────────────────────╮
-│  🦊 kogitsune · pack your kit                       📁 ~/cerpro        │
-├──────────────────────────────────────────────────────────────────────┤
-│  ALWAYS RIDES ALONG (pinned)                                           │
-│   ✔ 🧠 memory (claude-mem)            ── default, not removable        │
-│   ✔ 🛡 guardrails (RULES.md)          ── default                       │
-│   ✔ 🕸 graphify                       ── default                       │
-│  ── KITS ────────────────────────────────────────────────────────     │
-│   ( ) Lean        memory only            ~1K ctx                       │
-│   (•) DB work     + supabase + postgres  ~13K ctx   ◀ selected         │
-│   ( ) n8n         + n8n-mcp + n8n skills ~18K ctx                      │
-│  ── À LA CARTE ──────────────────────────────────────────────────     │
-│   [x] supabase        🔴 ~10K      [x] postgres-bp      🟡 ~2K         │
-│   [ ] notion          🟠 ~4K       [ ] frontend-design  🟢 ~1K         │
-│                                                                        │
-│   pack weight:  ~13K tokens  ▓▓▓▓░░░░░░  (lean = ~1K)                  │
-│         [ ↵ Go ]      [ s Save kit ]      [ q Lean ]                   │
-╰──────────────────────────────────────────────────────────────────────╯
+ pack ›                                        ┌─ preview ──────────────────────┐
+▶ 🦊 db             ~12K  supabase postgres-bp  │ 🦊 pack your kit               │
+  🦊 db-heavy       ~13K  supabase context7 …   │                                │
+  🦊 n8n            ~16K  n8n-mcp n8n            │ pack weight: ~13.2K tokens     │
+  🦊 lean           ~0K                          │  ▓▓▓▓▓▓▓▓▓░░░░░░░░░░░░░░        │
+✔ 🔴 supabase       ~10K  (mcp)                  │  (lean = ~1.2K)                │
+  🟠 notion         ~4K   (mcp)                  │                                │
+✔ 🟡 postgres-bp    ~2K   (skill)                │ mcp:    supabase               │
+  🟢 frontend-design ~1K  (skill)                │ skills: postgres-bp            │
+                                                 │ pinned: memory · guardrails ·  │
+ space toggle · enter go · ctrl-s save · …       │         graphify               │
+                                                 └────────────────────────────────┘
 ```
 
 ## Why you'd want it

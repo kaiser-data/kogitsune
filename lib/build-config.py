@@ -333,7 +333,20 @@ def main(argv=None) -> int:
 
     if ns.list:
         cat = config.get("catalog", {}) or {}
+        # resolve each kit so the picker can show its true weight (extends/+/- applied)
+        kit_info = {}
+        for kname in (config.get("kits", {}) or {}):
+            try:
+                m = build(config, mcp_servers, kit=kname, mcp_sel=None, skills_sel=None)
+                kit_info[kname] = {
+                    "weight": m["weight"],
+                    "mcp": [i["name"] for i in m["items"] if i["kind"] == "mcp"],
+                    "skills": [i["name"] for i in m["items"] if i["kind"] != "mcp"],
+                }
+            except Exception:
+                kit_info[kname] = {"weight": 0, "mcp": [], "skills": []}
         json.dump({"kits": config.get("kits", {}) or {},
+                   "kit_info": kit_info,
                    "mcp": cat.get("mcp", {}) or {},
                    "skills": cat.get("skills", {}) or {},
                    "pinned": list((config.get("pinned", {}) or {}).keys())},

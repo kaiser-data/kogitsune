@@ -213,27 +213,61 @@ cmd_doctor() {
   echo "  config validity:"; bc --list >/dev/null 2>&1 && echo "    ✔ parses" || echo "    ✘ parse error"
 }
 
+# fzf preview: sum the weights of the currently-selected TSV lines → live pack bar.
+# Args are full TSV lines (fields: display, kind, name, weight) passed via fzf {+}.
+cmd_preview() {
+  local total=0 kits="" mcps="" skills="" line kind name weight
+  for line in "$@"; do
+    IFS=$'\t' read -r _ kind name weight <<<"$line"
+    [[ "$weight" =~ ^[0-9]+$ ]] && total=$((total + weight))
+    case "$kind" in
+      kit)   kits="$kits $name" ;;
+      mcp)   mcps="$mcps $name" ;;
+      skill) skills="$skills $name" ;;
+    esac
+  done
+  echo "🦊 pack your kit"
+  echo
+  python3 "$LIB/context-est.py" --weights "$total" --width 24
+  echo
+  [[ -n "$kits"   ]] && echo "kit:    ${kits# }"
+  [[ -n "$mcps"   ]] && echo "mcp:    ${mcps# }"
+  [[ -n "$skills" ]] && echo "skills: ${skills# }"
+  echo
+  echo "pinned (always): memory · guardrails · graphify"
+}
+
 cmd_picker() {
   local FZF="${KOGITSUNE_FZF:-fzf}"
   command -v "$FZF" >/dev/null 2>&1 || die "missing dependency: fzf (needed for the picker; use 'kit <name>' instead)"
   need python3; need jq
+  local self="$ROOT/bin/kit"
   local list; list="$(bc --list)"
-  local kits; kits="$(echo "$list" | jq -r '.kits|keys[]' | sed 's/^/kit:   /')"
-  local mcp;  mcp="$(echo "$list" | jq -r '.mcp|to_entries[]|"mcp:   \(.value.tag // "") \(.key)"')"
-  local skl;  skl="$(echo "$list" | jq -r '.skills|to_entries[]|"skill: \(.value.tag // "") \(.key)"')"
-  echo "🦊 pinned (always on): $(echo "$list" | jq -r '.pinned|join(", ")')" >&2
+  # TSV rows: <display>\t<kind>\t<name>\t<weight>  (only column 1 is shown/searched)
+  local rows; rows="$(echo "$list" | jq -r '
+    def pad($n): (. + "                    ")[0:$n];
+    ( .kit_info | to_entries[]
+      | "\("🦊 " + (.key|pad(13)))  ~\((.value.weight/1000)|floor)K  \(((.value.mcp + .value.skills)|join(" ")))\t" + "kit\t\(.key)\t\(.value.weight)" ),
+    ( .mcp | to_entries[]
+      | "\((.value.tag // "•") + " " + (.key|pad(16)))  ~\((.value.weight//0)/1000|floor)K  (mcp)\tmcp\t\(.key)\t\(.value.weight // 0)" ),
+    ( .skills | to_entries[]
+      | "\((.value.tag // "•") + " " + (.key|pad(16)))  ~\((.value.weight//0)/1000|floor)K  (skill)\tskill\t\(.key)\t\(.value.weight // 0)" )
+  ')"
   local pick key
-  pick="$(printf '%s\n%s\n%s\n' "$kits" "$mcp" "$skl" | \
-    "$FZF" --multi --prompt='pack › ' --height=60% --border --expect=ctrl-s \
-        --header='space: toggle · enter: go · ctrl-s: save as kit · pick ONE kit:* or combine mcp:/skill:' )" || exit 0
-  key="$(echo "$pick" | head -1)"           # first line is the --expect key (blank for enter)
-  pick="$(echo "$pick" | tail -n +2)"
+  pick="$(printf '%s\n' "$rows" | \
+    "$FZF" --multi --ansi --delimiter='\t' --with-nth=1 --nth=1 \
+        --prompt='pack › ' --height=80% --border --reverse --marker='✔ ' --pointer='▶' \
+        --expect=ctrl-s \
+        --header=$'space toggle · enter go · ctrl-s save · 🧠 memory + 🛡 guardrails + 🕸 graphify always ride along' \
+        --preview="$self __preview {+}" --preview-window='right:46%:wrap' )" || exit 0
+  key="$(printf '%s\n' "$pick" | head -1)"        # first line is the --expect key (blank for enter)
+  pick="$(printf '%s\n' "$pick" | tail -n +2)"
   [[ -z "$pick" ]] && exit 0
-  # a chosen kit:* wins; otherwise gather à la carte mcp/skill selections
-  local kitname; kitname="$(echo "$pick" | awk '/^kit:/{print $2; exit}')"
-  local mcps skills
-  mcps="$(echo "$pick" | awk '/^mcp:/{print $NF}' | paste -sd, -)"
-  skills="$(echo "$pick" | awk '/^skill:/{print $NF}' | paste -sd, -)"
+  # a chosen kit wins; otherwise gather à la carte mcp/skill selections (parse TSV fields)
+  local kitname mcps skills
+  kitname="$(printf '%s\n' "$pick" | awk -F'\t' '$2=="kit"{print $3; exit}')"
+  mcps="$(printf '%s\n' "$pick"   | awk -F'\t' '$2=="mcp"{print $3}'   | paste -sd, -)"
+  skills="$(printf '%s\n' "$pick" | awk -F'\t' '$2=="skill"{print $3}' | paste -sd, -)"
   if [[ "$key" == "ctrl-s" ]]; then
     local nm; printf 'save as kit name: ' >&2; read -r nm </dev/tty || exit 0
     [[ -z "$nm" ]] && exit 0
@@ -259,6 +293,7 @@ main() {
     help|-h|--help)        awk 'NR>1 && /^#/{sub(/^# ?/,"");print;next} NR>1{exit}' "$0" ;;
     __kits)                bc --list 2>/dev/null | jq -r '.kits|keys[]' 2>/dev/null ;;
     __commands)            printf '%s\n' ls show save rm measure doctor help ;;
+    __preview)             shift; cmd_preview "$@" ;;
     *)
       # kit <name> [-- claude args]
       local kit="$cmd"; shift
