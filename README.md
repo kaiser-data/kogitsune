@@ -130,9 +130,14 @@ kit ls            # list kits + à la carte catalog
 kit show db       # what would the db kit pack? (no launch)
 kit db --dry-run  # resolve + print the exact claude command, launch nothing
 kit measure db    # launch a one-shot probe and record the kit's real ctx tokens
+kit save mine --mcp supabase,notion --skills postgres-bp   # save a reusable kit
 kit db            # launch it
-kit               # or pick interactively (fzf)
+kit               # or pick interactively (fzf) — ctrl-s in the picker saves a kit
 ```
+
+A repo can also ship a **project overlay**: drop a `.kogitsune.yaml` in the working directory and
+the fox merges it over your global `kits.yaml` (CLI flags win last), so a project recommends its own
+kit without touching your global config.
 
 **Requires:** `claude` CLI, `python3` + `PyYAML`, `jq`, and `fzf` (for the picker only).
 **Auth:** uses your existing Claude login — credentials are copied into the session mirror (mode `600`)

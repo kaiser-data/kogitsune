@@ -7,6 +7,7 @@
 #   kit <name> -- ARGS   forward ARGS to `claude` (e.g. kit db -- --model opus "fix X")
 #   kit ls               list kits + à la carte catalog
 #   kit show <name>      show what a kit packs (no launch)
+#   kit save <name> --mcp a,b --skills x,y   save a selection as a named kit
 #   kit measure <name>   launch a one-shot probe; record real ctx tokens
 #   kit doctor           check deps, config, auth
 #   kit help
@@ -31,7 +32,14 @@ STATE_FILE="$STATE_DIR/last-kits.json"
 
 die() { echo "kit: $*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "missing dependency: $1"; }
-bc() { python3 "$LIB/build-config.py" --config "$CONFIG" --mcp-on-demand "$MCP_ON_DEMAND" "$@"; }
+# auto-detect a project overlay (.kogitsune.yaml in cwd) merged over the base config.
+# bash 3.2-safe: no mapfile; empty-array expansion guarded for `set -u`.
+bc() {
+  local ov=()
+  [[ -f "./.kogitsune.yaml" ]] && ov=(--overlay "./.kogitsune.yaml")
+  python3 "$LIB/build-config.py" --config "$CONFIG" --mcp-on-demand "$MCP_ON_DEMAND" \
+    ${ov[@]+"${ov[@]}"} "$@"
+}
 ce() { python3 "$LIB/context-est.py" "$@"; }
 
 remember_kit() {  # $1=kit
@@ -105,13 +113,37 @@ cmd_measure() {  # launch a one-shot probe under the kit's mirror, record real c
   echo "   recorded to $mf"
 }
 
+# resolve the file we may write kits into; seed from the example if needed
+save_target() {
+  if [[ -n "${KOGITSUNE_CONFIG:-}" ]]; then echo "$KOGITSUNE_CONFIG"; return; fi
+  if [[ "$CONFIG" == *examples/kits.example.yaml ]]; then
+    local t="./kits.yaml"
+    [[ -f "$t" ]] || { cp "$CONFIG" "$t"; echo "kit: created $t from the example" >&2; }
+    echo "$t"
+  else echo "$CONFIG"; fi
+}
+
+cmd_save() {  # kit save <name> [--mcp a,b] [--skills x,y]
+  need python3
+  local name="${1:?usage: kit save <name> [--mcp a,b] [--skills x,y]}"; shift
+  local mcp="" skills=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in --mcp) mcp="$2"; shift 2;; --skills) skills="$2"; shift 2;; *) shift;; esac
+  done
+  local target; target="$(save_target)"
+  python3 "$LIB/build-config.py" --config "$target" --save "$name" --mcp "$mcp" --skills "$skills"
+  echo "🦊 saved kit '$name' — launch it with: kit $name" >&2
+}
+
 cmd_show() {
   need python3
   local kit="${1:?usage: kit show <name>}"
-  bc "$kit" --dry-run | jq '{kit, weight, mcp: (.mcp_config.mcpServers|keys),
+  local m; m="$(bc "$kit" --dry-run)"
+  echo "$m" | jq '{kit, weight, mcp: (.mcp_config.mcpServers|keys),
        plugins: (.plugins|keys), skills: (.skills|map(split("/")|last)),
        imports: (.imports|map(split("/")|last)), warnings}'
-  echo "🦊 $(bc "$kit" --dry-run 2>/dev/null | jq -r .weight | xargs -I{} python3 "$LIB/context-est.py" --weights {})"
+  # human pack-weight line goes to stderr so stdout stays valid JSON for piping
+  echo "🦊 $(echo "$m" | jq -r .weight | xargs -I{} python3 "$LIB/context-est.py" --weights {})" >&2
 }
 
 cmd_ls() {
@@ -146,17 +178,25 @@ cmd_picker() {
   local mcp;  mcp="$(echo "$list" | jq -r '.mcp|to_entries[]|"mcp:   \(.value.tag // "") \(.key)"')"
   local skl;  skl="$(echo "$list" | jq -r '.skills|to_entries[]|"skill: \(.value.tag // "") \(.key)"')"
   echo "🦊 pinned (always on): $(echo "$list" | jq -r '.pinned|join(", ")')" >&2
-  local pick
+  local pick key
   pick="$(printf '%s\n%s\n%s\n' "$kits" "$mcp" "$skl" | \
-    "$FZF" --multi --prompt='pack › ' --height=60% --border \
-        --header='space: toggle à la carte · enter: go · pick ONE kit:* or combine mcp:/skill:' )" || exit 0
+    "$FZF" --multi --prompt='pack › ' --height=60% --border --expect=ctrl-s \
+        --header='space: toggle · enter: go · ctrl-s: save as kit · pick ONE kit:* or combine mcp:/skill:' )" || exit 0
+  key="$(echo "$pick" | head -1)"           # first line is the --expect key (blank for enter)
+  pick="$(echo "$pick" | tail -n +2)"
   [[ -z "$pick" ]] && exit 0
   # a chosen kit:* wins; otherwise gather à la carte mcp/skill selections
   local kitname; kitname="$(echo "$pick" | awk '/^kit:/{print $2; exit}')"
-  if [[ -n "$kitname" ]]; then cmd_launch "$kitname"; return; fi
   local mcps skills
   mcps="$(echo "$pick" | awk '/^mcp:/{print $NF}' | paste -sd, -)"
   skills="$(echo "$pick" | awk '/^skill:/{print $NF}' | paste -sd, -)"
+  if [[ "$key" == "ctrl-s" ]]; then
+    local nm; printf 'save as kit name: ' >&2; read -r nm </dev/tty || exit 0
+    [[ -z "$nm" ]] && exit 0
+    cmd_save "$nm" --mcp "$mcps" --skills "$skills"
+    return
+  fi
+  if [[ -n "$kitname" ]]; then cmd_launch "$kitname"; return; fi
   need claude
   local manifest; manifest="$(resolve_to_manifest --mcp "$mcps" --skills "$skills")"
   launch_from_manifest "$manifest"
@@ -168,9 +208,10 @@ main() {
     ""|pick|picker)        cmd_picker ;;
     ls|list)               cmd_ls ;;
     show)                  shift; cmd_show "$@" ;;
+    save)                  shift; cmd_save "$@" ;;
     measure)               shift; cmd_measure "$@" ;;
     doctor)                cmd_doctor ;;
-    help|-h|--help)        sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//' ;;
+    help|-h|--help)        awk 'NR>1 && /^#/{sub(/^# ?/,"");print;next} NR>1{exit}' "$0" ;;
     *)
       # kit <name> [-- claude args]
       local kit="$cmd"; shift

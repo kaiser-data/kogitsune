@@ -22,6 +22,7 @@ import difflib
 import glob
 import json
 import os
+import re
 import sys
 
 # The typed-item registry. Each catalog/pinned entry carries exactly one of these.
@@ -230,6 +231,33 @@ def _fold(e: dict, plugins: dict, skill_srcs: list, imports: list, env: dict) ->
         env.update(e.get("env", {}))
 
 
+# --- save a kit (comment-preserving, line-based) ----------------------------
+
+def render_kit_entry(name: str, mcp: list[str], skills: list[str]) -> str:
+    return (f"  {name}: {{ mcp: [{', '.join(mcp)}], "
+            f"skills: [{', '.join(skills)}] }}")
+
+
+def save_kit_text(text: str, name: str, mcp: list[str], skills: list[str]) -> str:
+    """Insert/replace a kit under the `kits:` block, preserving comments & order."""
+    entry = render_kit_entry(name, mcp, skills)
+    lines = text.splitlines()
+    kits_idx = next((i for i, l in enumerate(lines) if re.match(r"^kits:\s*$", l)), None)
+    if kits_idx is None:
+        tail = lines + ["", "kits:", entry]
+        return "\n".join(tail) + "\n"
+    # replace an existing same-name entry inside the block
+    for j in range(kits_idx + 1, len(lines)):
+        l = lines[j]
+        if l.strip() and not l.startswith((" ", "\t")):
+            break  # dedented out of the block
+        if re.match(rf"^\s+{re.escape(name)}:", l):
+            lines[j] = entry
+            return "\n".join(lines) + "\n"
+    lines.insert(kits_idx + 1, entry)
+    return "\n".join(lines) + "\n"
+
+
 # --- CLI --------------------------------------------------------------------
 
 def _parse_args(argv):
@@ -244,6 +272,8 @@ def _parse_args(argv):
     p.add_argument("--dry-run", action="store_true", help="print manifest, write nothing")
     p.add_argument("--list", action="store_true",
                    help="print kits + catalog as JSON (for `kit ls` / the picker) and exit")
+    p.add_argument("--save", metavar="NAME",
+                   help="save the --mcp/--skills selection as a named kit in --config")
     return p.parse_args(argv)
 
 
@@ -253,6 +283,16 @@ def _split(s: str) -> list[str]:
 
 def main(argv=None) -> int:
     ns = _parse_args(argv if argv is not None else sys.argv[1:])
+
+    if ns.save:
+        path = expand(ns.config)
+        text = open(path).read() if os.path.isfile(path) else ""
+        new = save_kit_text(text, ns.save, _split(ns.mcp), _split(ns.skills))
+        with open(path, "w") as fh:
+            fh.write(new)
+        sys.stderr.write(f"saved kit '{ns.save}' to {path}\n")
+        return 0
+
     config = load_yaml(ns.config)
     if ns.overlay and os.path.isfile(expand(ns.overlay)):
         config = deep_merge(config, load_yaml(ns.overlay))
