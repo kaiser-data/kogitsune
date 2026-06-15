@@ -10,7 +10,9 @@ cd "$ROOT" || exit 1   # so the fixture's relative import path resolves
 PASS=0; FAIL=0
 ok(){ printf '  \033[32mok\033[0m  %s\n' "$1"; PASS=$((PASS+1)); }
 no(){ printf '  \033[31mFAIL\033[0m %s\n' "$1"; FAIL=$((FAIL+1)); }
-perms(){ stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1" 2>/dev/null; }
+# GNU stat (-c) first: BSD/macOS stat rejects -c cleanly so the fallback runs;
+# the reverse order is wrong because GNU `stat -f` *succeeds* with filesystem info.
+perms(){ stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null; }
 mirrors(){ find "$TMP" -maxdepth 1 -type d -name 'kogitsune.*' ! -name 'kogitsune.sel.*'; }
 seldirs(){ find "$TMP" -maxdepth 1 -type d -name 'kogitsune.sel.*'; }
 clean_tmp(){ find "$TMP" -maxdepth 1 -type d -name 'kogitsune.*' -exec rm -rf {} + 2>/dev/null; }
