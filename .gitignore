@@ -1,0 +1,10 @@
+# local config (contains your real server list / secrets)
+kits.yaml
+*.local.yaml
+
+# generated session configs
+.kogitsune-session-*.json
+tmp/
+
+# os
+.DS_Store

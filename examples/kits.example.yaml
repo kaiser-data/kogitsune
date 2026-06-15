@@ -1,0 +1,33 @@
+# kogitsune 🦊 — example kits config
+# Copy to ../kits.yaml and edit. The fox merges MCP server definitions from
+# ~/.claude/mcp-on-demand.json by name, so you only reference them here.
+
+# Always rides along — never a toggle.
+pinned:
+  memory:     { plugin: "claude-mem@thedotmack" }
+  guardrails: { import: "~/.claude/RULES.md" }
+  graphify:   { skill: "graphify" }
+
+# Catalog of selectable items, with rough context-weight hints (tokens) for the pack-weight bar.
+catalog:
+  mcp:
+    supabase:         { weight: 10000, tag: "🔴" }
+    n8n-mcp:          { weight: 12000, tag: "🔴" }
+    notion:           { weight: 4000,  tag: "🟠" }
+    dify-superclaude: { weight: 3000,  tag: "🟠" }
+    kitsune:          { weight: 2000,  tag: "🟡" }   # the lean big sibling
+    kitsune-forge:    { weight: 2000,  tag: "🟡" }
+    context7:         { weight: 1000,  tag: "🟢" }
+  skills:
+    postgres-bp:      { plugin: "postgres-best-practices@supabase-agent-skills", weight: 2000, tag: "🟡" }
+    n8n:              { dir: "~/.claude/skills/n8n-*", count: 7, weight: 4000, tag: "🟡" }
+    frontend-design:  { plugin: "frontend-design@claude-plugins-official", weight: 1000, tag: "🟢" }
+    sc-commands:      { prefix: "sc:", weight: 4000, tag: "🟡" }
+
+# Named kits shown in the picker and launchable directly via `kit <name>`.
+kits:
+  lean:     { mcp: [],                 skills: [] }
+  db:       { mcp: [supabase],         skills: [postgres-bp] }
+  n8n:      { mcp: [n8n-mcp],          skills: [n8n] }
+  frontend: { mcp: [],                 skills: [frontend-design] }
+  research: { mcp: [notion, context7], skills: [] }
