@@ -257,6 +257,8 @@ main() {
     measure)               shift; cmd_measure "$@" ;;
     doctor)                cmd_doctor ;;
     help|-h|--help)        awk 'NR>1 && /^#/{sub(/^# ?/,"");print;next} NR>1{exit}' "$0" ;;
+    __kits)                bc --list 2>/dev/null | jq -r '.kits|keys[]' 2>/dev/null ;;
+    __commands)            printf '%s\n' ls show save rm measure doctor help ;;
     *)
       # kit <name> [-- claude args]
       local kit="$cmd"; shift

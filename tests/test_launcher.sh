@@ -85,6 +85,19 @@ make_claude 7
 make_claude 0
 clean_tmp
 
+echo "== completion helpers =="
+ln -sf "$ROOT/bin/kit" "$BIN/kit"   # so completion's `kit __kits` resolves on PATH
+"$BIN/kit" __kits 2>/dev/null | grep -qx "db" && ok "__kits lists kit names" || no "__kits missing 'db'"
+# bash-completion smoke test: source the script and drive _kit
+# shellcheck disable=SC1091
+source "$ROOT/completions/kit.bash"
+COMP_WORDS=(kit d); COMP_CWORD=1
+_kit 2>/dev/null
+printf '%s\n' "${COMPREPLY[@]:-}" | grep -qx "db" && ok "bash completion offers kit names" || no "completion missing 'db'"
+COMP_WORDS=(kit db --); COMP_CWORD=2
+_kit 2>/dev/null
+printf '%s\n' "${COMPREPLY[@]:-}" | grep -qx -- "--strict" && ok "bash completion offers launch flags" || no "completion missing --strict"
+
 echo "== kog_cleanup path safety =="
 # shellcheck source=lib/session-env.sh
 source "$ROOT/lib/session-env.sh"

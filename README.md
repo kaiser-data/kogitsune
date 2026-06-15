@@ -139,6 +139,9 @@ A repo can also ship a **project overlay**: drop a `.kogitsune.yaml` in the work
 the fox merges it over your global `kits.yaml` (CLI flags win last), so a project recommends its own
 kit without touching your global config.
 
+**Tab completion:** `install.sh` prints the one line to add to your `~/.zshrc` or `~/.bashrc`
+(completes commands, kit names, and launch flags). Scripts live in `completions/`.
+
 **Requires:** `claude` CLI, `python3` + `PyYAML`, `jq`, and `fzf` (for the picker only).
 **Auth:** uses your existing Claude login — credentials are copied into the session mirror (mode `600`)
 and deleted on exit, or set `ANTHROPIC_API_KEY` to skip the copy entirely.

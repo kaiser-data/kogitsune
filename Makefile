@@ -1,6 +1,6 @@
 # kogitsune 🦊 — dev tasks
 SHELL := bash
-SCRIPTS := bin/kit lib/session-env.sh install.sh tests/test_launcher.sh
+SCRIPTS := bin/kit lib/session-env.sh install.sh tests/test_launcher.sh completions/kit.bash
 
 .PHONY: check test pytest launcher lint help
 help:

@@ -1,0 +1,30 @@
+#compdef kit
+# zsh completion for kogitsune `kit`.
+# Install: put this file's directory on your $fpath, e.g.
+#   fpath=(/path/to/kogitsune/completions $fpath) && autoload -Uz compinit && compinit
+_kit() {
+  local -a cmds kits
+  cmds=(
+    'ls:list kits + à la carte catalog'
+    'show:show what a kit packs'
+    'save:save a selection as a named kit'
+    'rm:remove a saved kit'
+    'measure:probe a kit and record real ctx tokens'
+    'doctor:check deps, config, auth'
+    'help:show usage'
+  )
+  kits=(${(f)"$(kit __kits 2>/dev/null)"})
+
+  if (( CURRENT == 2 )); then
+    _describe -t commands 'command' cmds
+    _describe -t kits 'kit' kits
+    return
+  fi
+
+  case "${words[2]}" in
+    show|rm|measure) _describe -t kits 'kit' kits ;;
+    save)            _message 'kit name' ;;
+    *)               _values 'flag' '--dry-run' '--strict' ;;
+  esac
+}
+_kit "$@"

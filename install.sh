@@ -26,6 +26,17 @@ case ":$PATH:" in
 esac
 
 echo
+echo "shell completion (optional):"
+case "$(basename "${SHELL:-}")" in
+  zsh)  echo "  # add to ~/.zshrc:"
+        echo "  fpath=($ROOT/completions \$fpath); autoload -Uz compinit && compinit" ;;
+  bash) echo "  # add to ~/.bashrc:"
+        echo "  source $ROOT/completions/kit.bash" ;;
+  *)    echo "  bash: source $ROOT/completions/kit.bash"
+        echo "  zsh:  fpath=($ROOT/completions \$fpath); autoload -Uz compinit && compinit" ;;
+esac
+
+echo
 echo "next:"
 echo "  cp examples/kits.example.yaml kits.yaml   # customize your kits"
 echo "  kit doctor                                # verify setup"
