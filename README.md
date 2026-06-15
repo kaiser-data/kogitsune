@@ -175,6 +175,23 @@ kits:
 `install.sh` round it out. See [`docs/spike/FINDINGS.md`](docs/spike/FINDINGS.md) for the validated
 mechanism and [`docs/PRIOR-ART.md`](docs/PRIOR-ART.md) for where this sits in the landscape.
 
+## Development & testing
+
+```bash
+make check     # shellcheck + all tests (what CI runs)
+make test      # pytest (pure logic) + launcher integration tests
+make lint      # shellcheck the shell scripts
+```
+
+- **Pure logic** (`build-config.py`, `context-est.py`, kit save) — unit-tested with pytest.
+- **The launcher** (`bin/kit` + `lib/session-env.sh`) — `tests/test_launcher.sh` runs it
+  hermetically against a **fake `claude`/keychain** (env seams: `KOGITSUNE_HOME_CONFIG`,
+  `KOGITSUNE_FZF`, …), asserting the launch contract, the mirror's structure, credential mode
+  `600`, the `ANTHROPIC_API_KEY` fast-path, exit-code passthrough, and — critically — that the
+  **session mirror is always deleted on exit** (no credential leak).
+- **CI** runs the suite on Linux *and* macOS; the macOS job runs **bash 3.2**, guarding the
+  portability floor.
+
 ## Family
 
 `kogitsune` is the little sibling of **kitsune**, the lean MCP. Same fox spirit (狐), one packs light. 🦊

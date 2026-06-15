@@ -1,0 +1,38 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]   # macOS runs bash 3.2 — guards the portability floor
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python deps
+        run: pip install pyyaml pytest
+
+      - name: Install shellcheck + jq (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y shellcheck jq
+
+      - name: Install shellcheck + jq (macOS)
+        if: runner.os == 'macOS'
+        run: brew install shellcheck jq
+
+      - name: Show bash version
+        run: bash --version | head -1
+
+      - name: Lint + test
+        run: make check

@@ -10,7 +10,9 @@
 # Build the mirror. Args: $1=manifest.json  $2=real config dir (~/.claude)
 # Echoes the mirror path on stdout. Caller owns cleanup via kog_cleanup.
 kog_build_mirror() {
-  local manifest="$1" rc="${2:-$HOME/.claude}"
+  # source config dir overridable via $2 or KOGITSUNE_HOME_CONFIG (hermetic tests)
+  local manifest="$1" rc="${2:-${KOGITSUNE_HOME_CONFIG:-$HOME/.claude}}"
+  local dotjson="${KOGITSUNE_HOME_DOTJSON:-$HOME/.claude.json}"
   local mirror; mirror="$(mktemp -d "${TMPDIR:-/tmp}/kogitsune.XXXXXX")"
   chmod 700 "$mirror"
 
@@ -25,7 +27,7 @@ kog_build_mirror() {
     esac
   done
   # ~/.claude.json lives at $HOME — relocate it into the mirror so projects/auth resolve
-  [[ -e "$HOME/.claude.json" ]] && ln -s "$HOME/.claude.json" "$mirror/.claude.json"
+  [[ -e "$dotjson" ]] && ln -s "$dotjson" "$mirror/.claude.json"
 
   # 2. curated skills dir — symlink only the chosen sources
   mkdir -p "$mirror/skills"

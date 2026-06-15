@@ -60,19 +60,30 @@ launch_from_manifest() {
   local manifest="$1"; shift
   jq -e '.warnings|length>0' "$manifest" >/dev/null 2>&1 && \
     jq -r '.warnings[] | "kit: warning — \(.)"' "$manifest" >&2 || true
-  local mcp_path; mcp_path="$(jq -r '.mcp_config_path' "$manifest")"
+  local mcp_path seldir; mcp_path="$(jq -r '.mcp_config_path' "$manifest")"
+  seldir="$(dirname "$manifest")"   # the kogitsune.sel.* dir holding manifest + mcp.json
   echo "🦊 $(pack_weight_line "$manifest")" >&2
   if [[ -n "${KIT_DRY_RUN:-}" ]]; then
     jq -r '"would launch:  kit=\(.kit // "(à la carte)")  mcp=\(.mcp_config.mcpServers|keys|join(","))  "
            + "plugins=\(.plugins|keys|join(","))  skills=\(.skills|map(split("/")|last)|join(","))"' "$manifest" >&2
     echo "   claude --strict-mcp-config --mcp-config $mcp_path $*" >&2
+    kog_cleanup "$seldir"
     return 0
   fi
   local mirror; mirror="$(kog_build_mirror "$manifest")"
-  trap 'kog_cleanup "$mirror"' EXIT INT TERM
-  [[ -n "${KIT_DEBUG:-}" ]] && { echo "kit: mirror=$mirror (KIT_DEBUG set — not auto-cleaned)" >&2; trap - EXIT; }
-  CLAUDE_CONFIG_DIR="$mirror" exec claude \
-    --strict-mcp-config --mcp-config "$mcp_path" "$@"
+  # NOTE: run claude as a CHILD (not exec) so the EXIT/INT/TERM trap actually fires —
+  # exec would replace this shell and leak the mirror (incl. the creds file).
+  trap 'kog_cleanup "$mirror"; kog_cleanup "$seldir"' EXIT INT TERM
+  if [[ -n "${KIT_DEBUG:-}" ]]; then
+    echo "kit: mirror=$mirror (KIT_DEBUG set — not auto-cleaned)" >&2
+    trap - EXIT INT TERM
+  fi
+  local rc=0
+  CLAUDE_CONFIG_DIR="$mirror" claude \
+    --strict-mcp-config --mcp-config "$mcp_path" "$@" || rc=$?
+  if [[ -z "${KIT_DEBUG:-}" ]]; then kog_cleanup "$mirror"; kog_cleanup "$seldir"; fi
+  trap - EXIT INT TERM
+  exit "$rc"
 }
 
 resolve_to_manifest() {  # writes manifest to a temp file, echoes its path. args: bc selection flags
