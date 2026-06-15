@@ -128,8 +128,10 @@ cp examples/kits.example.yaml kits.yaml   # then edit to taste
 kit doctor        # check deps, config, auth
 kit ls            # list kits + à la carte catalog
 kit show db       # what would the db kit pack? (no launch)
+kit db --dry-run  # resolve + print the exact claude command, launch nothing
+kit measure db    # launch a one-shot probe and record the kit's real ctx tokens
 kit db            # launch it
-kit               # or pick interactively
+kit               # or pick interactively (fzf)
 ```
 
 **Requires:** `claude` CLI, `python3` + `PyYAML`, `jq`, and `fzf` (for the picker only).

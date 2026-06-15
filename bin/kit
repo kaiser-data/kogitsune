@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # kogitsune 🦊 — pack your kit, send the little fox off light.
 # Usage:
-#   kit                 interactive picker (fzf)
-#   kit <name>          launch a named kit (lean|db|n8n|frontend|research|…)
-#   kit <name> -- ARGS  forward ARGS to `claude` (e.g. kit db -- --model opus "fix X")
-#   kit ls              list kits + à la carte catalog
-#   kit show <name>     show what a kit packs (dry run, no launch)
-#   kit doctor          check deps, config, auth, and measured savings
+#   kit                  interactive picker (fzf)
+#   kit <name>           launch a named kit (lean|db|n8n|frontend|research|…)
+#   kit <name> --dry-run resolve + show the plan, launch nothing
+#   kit <name> -- ARGS   forward ARGS to `claude` (e.g. kit db -- --model opus "fix X")
+#   kit ls               list kits + à la carte catalog
+#   kit show <name>      show what a kit packs (no launch)
+#   kit measure <name>   launch a one-shot probe; record real ctx tokens
+#   kit doctor           check deps, config, auth
 #   kit help
 set -euo pipefail
 
@@ -51,9 +53,15 @@ launch_from_manifest() {
   jq -e '.warnings|length>0' "$manifest" >/dev/null 2>&1 && \
     jq -r '.warnings[] | "kit: warning — \(.)"' "$manifest" >&2 || true
   local mcp_path; mcp_path="$(jq -r '.mcp_config_path' "$manifest")"
+  echo "🦊 $(pack_weight_line "$manifest")" >&2
+  if [[ -n "${KIT_DRY_RUN:-}" ]]; then
+    jq -r '"would launch:  kit=\(.kit // "(à la carte)")  mcp=\(.mcp_config.mcpServers|keys|join(","))  "
+           + "plugins=\(.plugins|keys|join(","))  skills=\(.skills|map(split("/")|last)|join(","))"' "$manifest" >&2
+    echo "   claude --strict-mcp-config --mcp-config $mcp_path $*" >&2
+    return 0
+  fi
   local mirror; mirror="$(kog_build_mirror "$manifest")"
   trap 'kog_cleanup "$mirror"' EXIT INT TERM
-  echo "🦊 $(pack_weight_line "$manifest")" >&2
   [[ -n "${KIT_DEBUG:-}" ]] && { echo "kit: mirror=$mirror (KIT_DEBUG set — not auto-cleaned)" >&2; trap - EXIT; }
   CLAUDE_CONFIG_DIR="$mirror" exec claude \
     --strict-mcp-config --mcp-config "$mcp_path" "$@"
@@ -65,12 +73,36 @@ resolve_to_manifest() {  # writes manifest to a temp file, echoes its path. args
   echo "$out/manifest.json"
 }
 
-cmd_launch() {  # $1=kit name, rest=claude passthrough
+cmd_launch() {  # $1=kit name, rest=claude passthrough (supports --dry-run)
   local kit="$1"; shift || true
-  need python3; need jq; need claude
+  [[ "${1:-}" == "--dry-run" ]] && { export KIT_DRY_RUN=1; shift; }
+  need python3; need jq
+  [[ -z "${KIT_DRY_RUN:-}" ]] && need claude
   local manifest; manifest="$(resolve_to_manifest "$kit")"
-  remember_kit "$kit"
+  [[ -z "${KIT_DRY_RUN:-}" ]] && remember_kit "$kit"
   launch_from_manifest "$manifest" "$@"
+}
+
+cmd_measure() {  # launch a one-shot probe under the kit's mirror, record real ctx tokens
+  need python3; need jq; need claude
+  local kit="${1:?usage: kit measure <name>}"
+  local manifest; manifest="$(resolve_to_manifest "$kit")"
+  local mcp_path est; mcp_path="$(jq -r '.mcp_config_path' "$manifest")"; est="$(jq -r '.weight' "$manifest")"
+  echo "kit: measuring '$kit' — launching a one-shot probe…" >&2
+  local mirror; mirror="$(kog_build_mirror "$manifest")"
+  trap 'kog_cleanup "$mirror"' EXIT INT TERM
+  local out; out="$(CLAUDE_CONFIG_DIR="$mirror" claude -p --output-format=json --model haiku \
+      'Reply with exactly: PONG' --strict-mcp-config --mcp-config "$mcp_path" 2>/dev/null)"
+  kog_cleanup "$mirror"; trap - EXIT INT TERM
+  local ctx; ctx="$(echo "$out" | jq -r '((.usage.input_tokens//0)+(.usage.cache_creation_input_tokens//0)+(.usage.cache_read_input_tokens//0))')"
+  if ! [[ "$ctx" =~ ^[0-9]+$ ]] || [[ "$ctx" -eq 0 ]]; then
+    echo "kit: measure failed — $(echo "$out" | jq -r '.result // "no output"')" >&2; return 1
+  fi
+  mkdir -p "$STATE_DIR"
+  local mf="$STATE_DIR/measured.json" cur="{}"; [[ -f "$mf" ]] && cur="$(cat "$mf")"
+  echo "$cur" | jq --arg k "$kit" --argjson c "$ctx" '.[$k]=$c' > "$mf" 2>/dev/null || true
+  echo "🦊 kit '$kit':  measured = ${ctx} tokens   (catalog est ~${est} over the lean baseline)"
+  echo "   recorded to $mf"
 }
 
 cmd_show() {
@@ -106,7 +138,9 @@ cmd_doctor() {
 }
 
 cmd_picker() {
-  need fzf; need python3; need jq
+  local FZF="${KOGITSUNE_FZF:-fzf}"
+  command -v "$FZF" >/dev/null 2>&1 || die "missing dependency: fzf (needed for the picker; use 'kit <name>' instead)"
+  need python3; need jq
   local list; list="$(bc --list)"
   local kits; kits="$(echo "$list" | jq -r '.kits|keys[]' | sed 's/^/kit:   /')"
   local mcp;  mcp="$(echo "$list" | jq -r '.mcp|to_entries[]|"mcp:   \(.value.tag // "") \(.key)"')"
@@ -114,7 +148,7 @@ cmd_picker() {
   echo "🦊 pinned (always on): $(echo "$list" | jq -r '.pinned|join(", ")')" >&2
   local pick
   pick="$(printf '%s\n%s\n%s\n' "$kits" "$mcp" "$skl" | \
-    fzf --multi --prompt='pack › ' --height=60% --border \
+    "$FZF" --multi --prompt='pack › ' --height=60% --border \
         --header='space: toggle à la carte · enter: go · pick ONE kit:* or combine mcp:/skill:' )" || exit 0
   [[ -z "$pick" ]] && exit 0
   # a chosen kit:* wins; otherwise gather à la carte mcp/skill selections
@@ -134,6 +168,7 @@ main() {
     ""|pick|picker)        cmd_picker ;;
     ls|list)               cmd_ls ;;
     show)                  shift; cmd_show "$@" ;;
+    measure)               shift; cmd_measure "$@" ;;
     doctor)                cmd_doctor ;;
     help|-h|--help)        sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//' ;;
     *)
