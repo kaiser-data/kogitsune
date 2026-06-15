@@ -258,6 +258,22 @@ def save_kit_text(text: str, name: str, mcp: list[str], skills: list[str]) -> st
     return "\n".join(lines) + "\n"
 
 
+def remove_kit_text(text: str, name: str) -> tuple[str, bool]:
+    """Remove a kit line from the `kits:` block. Returns (new_text, removed?)."""
+    lines = text.splitlines()
+    kits_idx = next((i for i, l in enumerate(lines) if re.match(r"^kits:\s*$", l)), None)
+    if kits_idx is None:
+        return text, False
+    for j in range(kits_idx + 1, len(lines)):
+        l = lines[j]
+        if l.strip() and not l.startswith((" ", "\t")):
+            break
+        if re.match(rf"^\s+{re.escape(name)}:", l):
+            del lines[j]
+            return "\n".join(lines) + "\n", True
+    return text, False
+
+
 # --- CLI --------------------------------------------------------------------
 
 def _parse_args(argv):
@@ -274,6 +290,7 @@ def _parse_args(argv):
                    help="print kits + catalog as JSON (for `kit ls` / the picker) and exit")
     p.add_argument("--save", metavar="NAME",
                    help="save the --mcp/--skills selection as a named kit in --config")
+    p.add_argument("--rm", metavar="NAME", help="remove a named kit from --config")
     return p.parse_args(argv)
 
 
@@ -291,6 +308,18 @@ def main(argv=None) -> int:
         with open(path, "w") as fh:
             fh.write(new)
         sys.stderr.write(f"saved kit '{ns.save}' to {path}\n")
+        return 0
+
+    if ns.rm:
+        path = expand(ns.config)
+        text = open(path).read() if os.path.isfile(path) else ""
+        new, removed = remove_kit_text(text, ns.rm)
+        if not removed:
+            sys.stderr.write(f"no kit '{ns.rm}' found in {path}\n")
+            return 1
+        with open(path, "w") as fh:
+            fh.write(new)
+        sys.stderr.write(f"removed kit '{ns.rm}' from {path}\n")
         return 0
 
     config = load_yaml(ns.config)

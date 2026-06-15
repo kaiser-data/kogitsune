@@ -42,3 +42,27 @@ def test_roundtrips_to_valid_yaml(buildcfg):
     data = yaml.safe_load(out)
     assert data["kits"]["mine"] == {"mcp": ["notion"], "skills": ["frontend-design"]}
     assert "db" in data["kits"] and "lean" in data["kits"]
+
+
+def test_remove_kit(buildcfg):
+    import yaml
+    out, removed = buildcfg.remove_kit_text(SAMPLE, "db")
+    assert removed is True
+    data = yaml.safe_load(out)
+    assert "db" not in data["kits"]
+    assert "lean" in data["kits"]          # siblings intact
+    assert "# my kits" in out              # comments preserved
+
+
+def test_remove_missing_kit_is_noop(buildcfg):
+    out, removed = buildcfg.remove_kit_text(SAMPLE, "nope")
+    assert removed is False
+    assert out == SAMPLE
+
+
+def test_save_then_remove_roundtrip(buildcfg):
+    import yaml
+    saved = buildcfg.save_kit_text(SAMPLE, "tmp", ["notion"], [])
+    out, removed = buildcfg.remove_kit_text(saved, "tmp")
+    assert removed is True
+    assert "tmp" not in yaml.safe_load(out)["kits"]

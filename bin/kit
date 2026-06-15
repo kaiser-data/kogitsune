@@ -8,7 +8,9 @@
 #   kit ls               list kits + à la carte catalog
 #   kit show <name>      show what a kit packs (no launch)
 #   kit save <name> --mcp a,b --skills x,y   save a selection as a named kit
+#   kit rm <name>        remove a saved kit
 #   kit measure <name>   launch a one-shot probe; record real ctx tokens
+#   kit <name> --strict  refuse to launch if any reference is unresolved
 #   kit doctor           check deps, config, auth
 #   kit help
 set -euo pipefail
@@ -46,7 +48,15 @@ remember_kit() {  # $1=kit
   mkdir -p "$STATE_DIR"
   local cwd; cwd="$(pwd)"
   local cur="{}"; [[ -f "$STATE_FILE" ]] && cur="$(cat "$STATE_FILE")"
-  echo "$cur" | jq --arg k "$1" --arg d "$cwd" '.[$d] = $k' > "$STATE_FILE" 2>/dev/null || true
+  # atomic write (temp + mv) so concurrent launches can't corrupt the state file
+  local tmp="$STATE_FILE.$$"
+  if echo "$cur" | jq --arg k "$1" --arg d "$cwd" '.[$d] = $k' > "$tmp" 2>/dev/null; then
+    mv -f "$tmp" "$STATE_FILE"
+  else rm -f "$tmp"; fi
+}
+
+measured_for() {  # $1=kit -> echoes measured tokens, or empty
+  jq -r --arg k "$1" '.[$k] // empty' "$STATE_DIR/measured.json" 2>/dev/null
 }
 
 pack_weight_line() {  # $1=manifest.json
@@ -92,12 +102,22 @@ resolve_to_manifest() {  # writes manifest to a temp file, echoes its path. args
   echo "$out/manifest.json"
 }
 
-cmd_launch() {  # $1=kit name, rest=claude passthrough (supports --dry-run)
+cmd_launch() {  # $1=kit name, rest=claude passthrough (supports --dry-run, --strict)
   local kit="$1"; shift || true
-  [[ "${1:-}" == "--dry-run" ]] && { export KIT_DRY_RUN=1; shift; }
+  local strict=""
+  while [[ "${1:-}" == "--dry-run" || "${1:-}" == "--strict" ]]; do
+    [[ "$1" == "--dry-run" ]] && export KIT_DRY_RUN=1
+    [[ "$1" == "--strict" ]] && strict=1
+    shift
+  done
   need python3; need jq
   [[ -z "${KIT_DRY_RUN:-}" ]] && need claude
   local manifest; manifest="$(resolve_to_manifest "$kit")"
+  if [[ -n "$strict" ]] && [[ "$(jq -r '.warnings|length' "$manifest")" != "0" ]]; then
+    jq -r '.warnings[] | "kit: warning — \(.)"' "$manifest" >&2
+    kog_cleanup "$(dirname "$manifest")"
+    die "--strict: refusing to launch with unresolved warnings"
+  fi
   [[ -z "${KIT_DRY_RUN:-}" ]] && remember_kit "$kit"
   launch_from_manifest "$manifest" "$@"
 }
@@ -119,7 +139,9 @@ cmd_measure() {  # launch a one-shot probe under the kit's mirror, record real c
   fi
   mkdir -p "$STATE_DIR"
   local mf="$STATE_DIR/measured.json" cur="{}"; [[ -f "$mf" ]] && cur="$(cat "$mf")"
-  echo "$cur" | jq --arg k "$kit" --argjson c "$ctx" '.[$k]=$c' > "$mf" 2>/dev/null || true
+  local tmp="$mf.$$"
+  if echo "$cur" | jq --arg k "$kit" --argjson c "$ctx" '.[$k]=$c' > "$tmp" 2>/dev/null; then
+    mv -f "$tmp" "$mf"; else rm -f "$tmp"; fi
   echo "🦊 kit '$kit':  measured = ${ctx} tokens   (catalog est ~${est} over the lean baseline)"
   echo "   recorded to $mf"
 }
@@ -146,6 +168,13 @@ cmd_save() {  # kit save <name> [--mcp a,b] [--skills x,y]
   echo "🦊 saved kit '$name' — launch it with: kit $name" >&2
 }
 
+cmd_rm() {
+  need python3
+  local name="${1:?usage: kit rm <name>}"
+  local target; target="$(save_target)"
+  python3 "$LIB/build-config.py" --config "$target" --rm "$name"
+}
+
 cmd_show() {
   need python3
   local kit="${1:?usage: kit show <name>}"
@@ -154,13 +183,17 @@ cmd_show() {
        plugins: (.plugins|keys), skills: (.skills|map(split("/")|last)),
        imports: (.imports|map(split("/")|last)), warnings}'
   # human pack-weight line goes to stderr so stdout stays valid JSON for piping
-  echo "🦊 $(echo "$m" | jq -r .weight | xargs -I{} python3 "$LIB/context-est.py" --weights {})" >&2
+  local line; line="🦊 $(echo "$m" | jq -r .weight | xargs -I{} python3 "$LIB/context-est.py" --weights {})"
+  local meas; meas="$(measured_for "$kit")"
+  [[ -n "$meas" ]] && line="$line   · measured ${meas} tok"
+  echo "$line" >&2
 }
 
 cmd_ls() {
   need python3
-  bc --list | jq -r '
-    "KITS:", (.kits|to_entries[]|"  \(.key)"),
+  local meas="{}"; [[ -f "$STATE_DIR/measured.json" ]] && meas="$(cat "$STATE_DIR/measured.json")"
+  bc --list | jq -r --argjson m "$meas" '
+    "KITS:", (.kits|to_entries[]| "  \(.key)" + (($m[.key]) as $x | if $x then "  (measured ~\($x) tok)" else "" end)),
     "", "MCP (à la carte):", (.mcp|to_entries[]|"  \(.value.tag // "") \(.key)  ~\(.value.weight // 0)"),
     "", "SKILLS (à la carte):", (.skills|to_entries[]|"  \(.value.tag // "") \(.key)  ~\(.value.weight // 0)"),
     "", "PINNED (always on): \(.pinned|join(", "))"'
@@ -220,6 +253,7 @@ main() {
     ls|list)               cmd_ls ;;
     show)                  shift; cmd_show "$@" ;;
     save)                  shift; cmd_save "$@" ;;
+    rm|remove)             shift; cmd_rm "$@" ;;
     measure)               shift; cmd_measure "$@" ;;
     doctor)                cmd_doctor ;;
     help|-h|--help)        awk 'NR>1 && /^#/{sub(/^# ?/,"");print;next} NR>1{exit}' "$0" ;;
