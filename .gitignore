@@ -1,5 +1,5 @@
-# local config (contains your real server list / secrets)
-kits.yaml
+# local config (contains your real server list / secrets) — root only, not test fixtures
+/kits.yaml
 *.local.yaml
 
 # generated session configs

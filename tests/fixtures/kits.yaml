@@ -1,0 +1,23 @@
+# Test fixture — exercises every item kind + extends/+/- composition + inline def.
+pinned:
+  memory:     { plugin: "claude-mem@thedotmack" }
+  guardrails: { import: "./tests/fixtures/RULES.md" }
+  graphify:   { skill: "graphify" }
+
+catalog:
+  mcp:
+    supabase: { weight: 10000, tag: "🔴" }                 # resolved from mcp-on-demand
+    notion:   { weight: 4000, tag: "🟠" }
+    inliney:  { weight: 1000, tag: "🟢", def: { command: "foo", args: ["--bar"] } }
+  skills:
+    postgres-bp:     { plugin: "postgres-best-practices@supabase-agent-skills", weight: 2000, tag: "🟡" }
+    n8n:             { dir: "n8n-*", count: 7, weight: 4000, tag: "🟡" }
+    frontend-design: { plugin: "frontend-design@claude-plugins-official", weight: 1000, tag: "🟢" }
+    sc-commands:     { prefix: "sc:", weight: 4000, tag: "🟡" }
+
+kits:
+  lean:     { mcp: [],                 skills: [] }
+  db:       { mcp: [supabase],         skills: [postgres-bp] }
+  db-heavy: { extends: db, mcp: ["+notion"] }
+  trimmed:  { extends: db, mcp: ["-supabase", "+inliney"], skills: ["-postgres-bp"] }
+  research: { mcp: [notion],           skills: [] }
