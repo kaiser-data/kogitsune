@@ -92,7 +92,7 @@ launch_from_manifest() {
     jq -r '"would launch:  kit=\(.kit // "(à la carte)")  model=\(.model // "(default)")  "
            + "mcp=\(.mcp_config.mcpServers|keys|join(","))  "
            + "plugins=\(.plugins|keys|join(","))  skills=\(.skills|map(split("/")|last)|join(","))"' "$manifest" >&2
-    echo "   claude ${mstr}--strict-mcp-config --mcp-config $mcp_path $*" >&2
+    echo "   claude ${mstr}$* --strict-mcp-config --mcp-config $mcp_path" >&2
     kog_cleanup "$seldir"
     return 0
   fi
@@ -105,8 +105,11 @@ launch_from_manifest() {
     trap - EXIT INT TERM
   fi
   local rc=0
+  # NOTE: --mcp-config is variadic (`<configs...>`), so it greedily eats any bare word
+  # that follows it. Keep it LAST and put user passthrough ("$@") before it, or a stray
+  # arg like `kit db tune` becomes a phantom second config path (claude: "not found").
   CLAUDE_CONFIG_DIR="$mirror" claude \
-    ${model_args[@]+"${model_args[@]}"} --strict-mcp-config --mcp-config "$mcp_path" "$@" || rc=$?
+    ${model_args[@]+"${model_args[@]}"} "$@" --strict-mcp-config --mcp-config "$mcp_path" || rc=$?
   if [[ -z "${KIT_DEBUG:-}" ]]; then kog_cleanup "$mirror"; kog_cleanup "$seldir"; fi
   trap - EXIT INT TERM
   exit "$rc"

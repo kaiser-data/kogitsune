@@ -69,6 +69,13 @@ grep -q -- "--model haiku" "$TMP/claude.log" && ! grep -q -- "--model opus --mod
 ! grep -q -- "--model" "$TMP/claude.log" && ok "no --model when kit declares none" || no "spurious --model: $(grep ARGS "$TMP/claude.log")"
 clean_tmp
 
+# regression: --mcp-config is variadic, so it must come LAST or a stray passthrough
+# word (e.g. `kit db tune`) gets eaten as a phantom second config path.
+"$ROOT/bin/kit" db tune >/dev/null 2>&1
+grep -qE -- "tune --strict-mcp-config --mcp-config [^ ]+$" "$TMP/claude.log" \
+  && ok "stray passthrough can't poison --mcp-config (kit db tune)" || no "arg order: $(grep ARGS "$TMP/claude.log")"
+clean_tmp
+
 echo "== launch guards: never hand claude a bad mcp-config =="
 # a build-config failure (malformed config) must die clearly and NOT invoke claude
 printf 'kits: [this is not: valid yaml\n' > "$TMP/broken.yaml"
