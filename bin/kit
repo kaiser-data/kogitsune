@@ -71,8 +71,14 @@ launch_from_manifest() {
   local manifest="$1"; shift
   jq -e '.warnings|length>0' "$manifest" >/dev/null 2>&1 && \
     jq -r '.warnings[] | "kit: warning — \(.)"' "$manifest" >&2 || true
-  local mcp_path seldir; mcp_path="$(jq -r '.mcp_config_path' "$manifest")"
+  local mcp_path seldir; mcp_path="$(jq -r '.mcp_config_path // empty' "$manifest")"
   seldir="$(dirname "$manifest")"   # the kogitsune.sel.* dir holding manifest + mcp.json
+  # guard: never pass a missing/relative path to claude (which would resolve it against
+  # cwd and emit a cryptic "MCP config file not found: <cwd>/<junk>"). Fail clearly instead.
+  if [[ -z "$mcp_path" || ! -f "$mcp_path" ]]; then
+    kog_cleanup "$seldir"
+    die "internal: resolved MCP config not found (mcp_config_path='${mcp_path:-<empty>}', manifest=$manifest) — please report"
+  fi
   echo "🦊 $(pack_weight_line "$manifest")" >&2
   # apply the kit/picker model, unless the user passes their own --model (which wins)
   local model user_model="" a; model="$(jq -r '.model // empty' "$manifest")"
@@ -107,8 +113,12 @@ launch_from_manifest() {
 }
 
 resolve_to_manifest() {  # writes manifest to a temp file, echoes its path. args: bc selection flags
-  local out; out="$(mktemp -d "${TMPDIR:-/tmp}/kogitsune.sel.XXXXXX")"
-  bc "$@" --out-dir "$out" > "$out/manifest.json"
+  local out; out="$(mktemp -d "${TMPDIR:-/tmp}/kogitsune.sel.XXXXXX")" \
+    || die "could not create a temp selection dir (TMPDIR=${TMPDIR:-/tmp})"
+  # fail loudly if build-config errors, so we never hand a half-written manifest downstream
+  if ! bc "$@" --out-dir "$out" > "$out/manifest.json"; then
+    kog_cleanup "$out"; die "failed to resolve selection (build-config error)"
+  fi
   echo "$out/manifest.json"
 }
 

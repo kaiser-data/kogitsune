@@ -69,6 +69,15 @@ grep -q -- "--model haiku" "$TMP/claude.log" && ! grep -q -- "--model opus --mod
 ! grep -q -- "--model" "$TMP/claude.log" && ok "no --model when kit declares none" || no "spurious --model: $(grep ARGS "$TMP/claude.log")"
 clean_tmp
 
+echo "== launch guards: never hand claude a bad mcp-config =="
+# a build-config failure (malformed config) must die clearly and NOT invoke claude
+printf 'kits: [this is not: valid yaml\n' > "$TMP/broken.yaml"
+: > "$TMP/claude.log"
+out="$(KOGITSUNE_CONFIG="$TMP/broken.yaml" "$ROOT/bin/kit" db 2>&1)"; rc=$?
+[[ "$rc" -ne 0 ]] && echo "$out" | grep -qi "failed to resolve" && ok "broken config fails with a clear error" || no "broken config not caught: $out"
+[[ ! -s "$TMP/claude.log" ]] && ok "claude not invoked on resolve failure" || no "claude ran despite bad config"
+clean_tmp
+
 echo "== mirror structure (inspect via KIT_DEBUG kept mirror) =="
 KIT_DEBUG=1 "$ROOT/bin/kit" db >/dev/null 2>&1
 MIR="$(mirrors | head -1)"
