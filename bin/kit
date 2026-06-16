@@ -288,7 +288,8 @@ cmd_tune_presets() {  # $1=tunedir
   if tune_presets_shown "$1"; then echo 0 > "$1/presets"; else echo 1 > "$1/presets"; fi
 }
 
-# Cycle the picker's model override (ctrl-o): default → sonnet → opus → haiku → default
+# Cycle the picker's model override (ctrl-o): default → sonnet → opus → haiku → default.
+# Marks the model as user-locked so preset loads no longer overwrite this explicit choice.
 cmd_tune_model() {  # $1=tunedir
   local cur next; cur="$(cat "$1/model" 2>/dev/null || true)"
   case "$cur" in
@@ -298,6 +299,7 @@ cmd_tune_model() {  # $1=tunedir
     *)        next="" ;;
   esac
   echo "$next" > "$1/model"
+  : > "$1/model_locked"   # ctrl-o = an explicit choice; presets stop touching the model
 }
 
 # Flip one item's membership. A kit row loads its preset (union-add), or drops it
@@ -313,6 +315,12 @@ cmd_tune_toggle() {  # $1=tunedir $2=kind $3=name
           "$d/state.json" > "$tmp" 2>/dev/null; then mv -f "$tmp" "$d/state.json"; else rm -f "$tmp"; fi
       ;;
     kit)
+      # was the preset already fully in the pack? if so this toggle DROPS it; else it LOADS it.
+      local loaded=""
+      jq -e --slurpfile l "$d/list.json" --arg k "$name" '
+        ($l[0].kit_info[$k] // {mcp:[],skills:[]}) as $kit |
+        (($kit.mcp - .mcp | length)==0 and ($kit.skills - .skills | length)==0)
+      ' "$d/state.json" >/dev/null 2>&1 || loaded=1   # not-already-full → we are loading it
       if jq --slurpfile l "$d/list.json" --arg k "$name" '
         ($l[0].kit_info[$k] // {mcp:[],skills:[]}) as $kit |
         (($kit.mcp|length) + ($kit.skills|length)) as $size |
@@ -322,6 +330,11 @@ cmd_tune_toggle() {  # $1=tunedir $2=kind $3=name
         then .mcp = (.mcp - $kit.mcp) | .skills = (.skills - $kit.skills)
         else .mcp = (.mcp + ($kit.mcp - .mcp)) | .skills = (.skills + ($kit.skills - .skills)) end
       ' "$d/state.json" > "$tmp" 2>/dev/null; then mv -f "$tmp" "$d/state.json"; else rm -f "$tmp"; fi
+      # loading a preset adopts its model — unless the user already chose one via ctrl-o
+      if [[ -n "$loaded" && ! -e "$d/model_locked" ]]; then
+        jq -r --slurpfile l "$d/list.json" --arg k "$name" \
+          '$l[0].kit_info[$k].model // empty' "$d/state.json" 2>/dev/null > "$d/model" || true
+      fi
       ;;
   esac
 }
@@ -333,8 +346,9 @@ cmd_tune_preview() {  # $1=tunedir
   echo
   python3 "$LIB/context-est.py" --weights "$total" --width 24
   echo
-  local mdl; mdl="$(cat "$d/model" 2>/dev/null || true)"
-  echo "model:  ${mdl:-default}   (ctrl-o cycles)"
+  local mdl note; mdl="$(cat "$d/model" 2>/dev/null || true)"
+  if [[ -e "$d/model_locked" ]]; then note="(ctrl-o · locked to your choice)"; else note="(ctrl-o cycles · presets set it)"; fi
+  echo "model:  ${mdl:-default}   $note"
   echo
   local mcps skills
   mcps="$(jq -r '.mcp|join(" ")' "$d/state.json")"

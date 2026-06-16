@@ -179,6 +179,25 @@ printf '%s\n' "$("$ROOT/bin/kit" __tune_rows "$TD" 2>/dev/null)" | grep -q "pres
 printf '%s\n' "$("$ROOT/bin/kit" __tune_preview "$TD" 2>/dev/null)" | grep -q "model:  default" && ok "preview shows the model" || no "preview model line missing"
 rm -rf "$TD"
 
+# preset model adoption: loading a 🦊 preset adopts its model UNLESS the user cycled (ctrl-o)
+TD="$TMP/kogitsune.tune.m"; mkdir -p "$TD"
+KOGITSUNE_CONFIG="$FIX/kits.yaml" KOGITSUNE_MCP_ON_DEMAND="$FIX/mcp-on-demand.json" \
+  python3 "$ROOT/lib/build-config.py" --config "$FIX/kits.yaml" \
+  --mcp-on-demand "$FIX/mcp-on-demand.json" --list > "$TD/list.json" 2>/dev/null
+# (a) unlocked: toggling db on adopts db's model (opus)
+echo '{"mcp":[],"skills":[]}' > "$TD/state.json"; : > "$TD/model"
+"$ROOT/bin/kit" __tune_toggle "$TD" kit db
+[[ "$(cat "$TD/model")" == "opus" ]] && ok "loading a preset adopts its model" || no "preset model: $(cat "$TD/model")"
+# (b) dropping that preset back off leaves the model alone (no clobber to default)
+"$ROOT/bin/kit" __tune_toggle "$TD" kit db
+[[ "$(cat "$TD/model")" == "opus" ]] && ok "dropping a preset keeps the model" || no "drop model: $(cat "$TD/model")"
+# (c) locked: after ctrl-o, loading a preset must NOT overwrite the user's choice
+echo '{"mcp":[],"skills":[]}' > "$TD/state.json"; : > "$TD/model"; rm -f "$TD/model_locked"
+"$ROOT/bin/kit" __tune_model "$TD"   # ctrl-o -> sonnet, and locks
+"$ROOT/bin/kit" __tune_toggle "$TD" kit db   # db is opus, but we chose sonnet
+[[ "$(cat "$TD/model")" == "sonnet" ]] && ok "ctrl-o choice survives a preset load" || no "lock failed: $(cat "$TD/model")"
+rm -rf "$TD"
+
 # picker seeds the model from the base kit and carries it into the launch
 out="$(KIT_DRY_RUN=1 KOGITSUNE_FZF="$BIN/fzf_noop" "$ROOT/bin/kit" tune db 2>&1)"
 echo "$out" | grep -q -- "--model opus" && ok "tune seeds + launches with the kit's model" || no "tune model: $(echo "$out" | grep would)"

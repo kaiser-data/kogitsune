@@ -62,8 +62,9 @@ glyph for whether it's in the pack; **space**/**tab** toggles the focused one an
 re-totals the weight instantly. A 🦊 **kit row loads its whole preset** — start from `db`, then
 drop `supabase` or add `context7` and launch the tuned set (or **ctrl-s** to save it as a new
 kit). **ctrl-p** hides the 🦊 preset rows when you just want to hand-pick items, and **ctrl-o**
-cycles the model (default → sonnet → opus → haiku). `kit tune <name>` seeds the picker from a kit
-directly, carrying its model.
+cycles the model (default → sonnet → opus → haiku). Loading a preset adopts that kit's model too —
+unless you've already picked one with ctrl-o, which then sticks. `kit tune <name>` seeds the picker
+from a kit directly, carrying its model.
 
 ```
  pack › db                                     ┌─ preview ──────────────────────┐
