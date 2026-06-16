@@ -8,7 +8,7 @@
 #   kit <name> -- ARGS   forward ARGS to `claude` (e.g. kit db -- --model opus "fix X")
 #   kit ls               list kits + à la carte catalog
 #   kit show <name>      show what a kit packs (no launch)
-#   kit save <name> --mcp a,b --skills x,y   save a selection as a named kit
+#   kit save <name> --mcp a,b --skills x,y [--model m]  save a selection as a named kit
 #   kit rm <name>        remove a saved kit
 #   kit measure <name>   launch a one-shot probe; record real ctx tokens
 #   kit <name> --strict  refuse to launch if any reference is unresolved
@@ -74,10 +74,19 @@ launch_from_manifest() {
   local mcp_path seldir; mcp_path="$(jq -r '.mcp_config_path' "$manifest")"
   seldir="$(dirname "$manifest")"   # the kogitsune.sel.* dir holding manifest + mcp.json
   echo "🦊 $(pack_weight_line "$manifest")" >&2
+  # apply the kit/picker model, unless the user passes their own --model (which wins)
+  local model user_model="" a; model="$(jq -r '.model // empty' "$manifest")"
+  for a in "$@"; do [[ "$a" == "--model" || "$a" == --model=* ]] && user_model=1; done
+  local model_args=() mstr=""
+  if [[ -n "$model" && -z "$user_model" ]]; then
+    model_args=(--model "$model"); mstr="--model $model "
+    echo "🦊 model: $model" >&2
+  fi
   if [[ -n "${KIT_DRY_RUN:-}" ]]; then
-    jq -r '"would launch:  kit=\(.kit // "(à la carte)")  mcp=\(.mcp_config.mcpServers|keys|join(","))  "
+    jq -r '"would launch:  kit=\(.kit // "(à la carte)")  model=\(.model // "(default)")  "
+           + "mcp=\(.mcp_config.mcpServers|keys|join(","))  "
            + "plugins=\(.plugins|keys|join(","))  skills=\(.skills|map(split("/")|last)|join(","))"' "$manifest" >&2
-    echo "   claude --strict-mcp-config --mcp-config $mcp_path $*" >&2
+    echo "   claude ${mstr}--strict-mcp-config --mcp-config $mcp_path $*" >&2
     kog_cleanup "$seldir"
     return 0
   fi
@@ -91,7 +100,7 @@ launch_from_manifest() {
   fi
   local rc=0
   CLAUDE_CONFIG_DIR="$mirror" claude \
-    --strict-mcp-config --mcp-config "$mcp_path" "$@" || rc=$?
+    ${model_args[@]+"${model_args[@]}"} --strict-mcp-config --mcp-config "$mcp_path" "$@" || rc=$?
   if [[ -z "${KIT_DEBUG:-}" ]]; then kog_cleanup "$mirror"; kog_cleanup "$seldir"; fi
   trap - EXIT INT TERM
   exit "$rc"
@@ -159,13 +168,17 @@ save_target() {
 
 cmd_save() {  # kit save <name> [--mcp a,b] [--skills x,y]
   need python3
-  local name="${1:?usage: kit save <name> [--mcp a,b] [--skills x,y]}"; shift
-  local mcp="" skills=""
+  local name="${1:?usage: kit save <name> [--mcp a,b] [--skills x,y] [--model m]}"; shift
+  local mcp="" skills="" model=""
   while [[ $# -gt 0 ]]; do
-    case "$1" in --mcp) mcp="$2"; shift 2;; --skills) skills="$2"; shift 2;; *) shift;; esac
+    case "$1" in
+      --mcp) mcp="$2"; shift 2;; --skills) skills="$2"; shift 2;;
+      --model) model="$2"; shift 2;; *) shift;;
+    esac
   done
   local target; target="$(save_target)"
-  python3 "$LIB/build-config.py" --config "$target" --save "$name" --mcp "$mcp" --skills "$skills"
+  python3 "$LIB/build-config.py" --config "$target" --save "$name" \
+    --mcp "$mcp" --skills "$skills" --model "$model"
   echo "🦊 saved kit '$name' — launch it with: kit $name" >&2
 }
 
@@ -180,7 +193,7 @@ cmd_show() {
   need python3
   local kit="${1:?usage: kit show <name>}"
   local m; m="$(bc "$kit" --dry-run)"
-  echo "$m" | jq '{kit, weight, mcp: (.mcp_config.mcpServers|keys),
+  echo "$m" | jq '{kit, model, weight, mcp: (.mcp_config.mcpServers|keys),
        plugins: (.plugins|keys), skills: (.skills|map(split("/")|last)),
        imports: (.imports|map(split("/")|last)), warnings}'
   # human pack-weight line goes to stderr so stdout stays valid JSON for piping
@@ -194,7 +207,10 @@ cmd_ls() {
   need python3
   local meas="{}"; [[ -f "$STATE_DIR/measured.json" ]] && meas="$(cat "$STATE_DIR/measured.json")"
   bc --list | jq -r --argjson m "$meas" '
-    "KITS:", (.kits|to_entries[]| "  \(.key)" + (($m[.key]) as $x | if $x then "  (measured ~\($x) tok)" else "" end)),
+    .kit_info as $ki |
+    "KITS:", (.kits|to_entries[]| "  \(.key)"
+       + (($ki[.key].model // "") as $md | if $md != "" then "  [\($md)]" else "" end)
+       + (($m[.key]) as $x | if $x then "  (measured ~\($x) tok)" else "" end)),
     "", "MCP (à la carte):", (.mcp|to_entries[]|"  \(.value.tag // "") \(.key)  ~\(.value.weight // 0)"),
     "", "SKILLS (à la carte):", (.skills|to_entries[]|"  \(.value.tag // "") \(.key)  ~\(.value.weight // 0)"),
     "", "PINNED (always on): \(.pinned|join(", "))"'
@@ -259,6 +275,18 @@ cmd_tune_presets() {  # $1=tunedir
   if tune_presets_shown "$1"; then echo 0 > "$1/presets"; else echo 1 > "$1/presets"; fi
 }
 
+# Cycle the picker's model override (ctrl-o): default → sonnet → opus → haiku → default
+cmd_tune_model() {  # $1=tunedir
+  local cur next; cur="$(cat "$1/model" 2>/dev/null || true)"
+  case "$cur" in
+    "")       next="sonnet" ;;
+    sonnet)   next="opus" ;;
+    opus)     next="haiku" ;;
+    *)        next="" ;;
+  esac
+  echo "$next" > "$1/model"
+}
+
 # Flip one item's membership. A kit row loads its preset (union-add), or drops it
 # wholesale if every one of its items is already in the pack. Atomic write.
 cmd_tune_toggle() {  # $1=tunedir $2=kind $3=name
@@ -292,6 +320,9 @@ cmd_tune_preview() {  # $1=tunedir
   echo
   python3 "$LIB/context-est.py" --weights "$total" --width 24
   echo
+  local mdl; mdl="$(cat "$d/model" 2>/dev/null || true)"
+  echo "model:  ${mdl:-default}   (ctrl-o cycles)"
+  echo
   local mcps skills
   mcps="$(jq -r '.mcp|join(" ")' "$d/state.json")"
   skills="$(jq -r '.skills|join(" ")' "$d/state.json")"
@@ -315,40 +346,44 @@ cmd_picker() {  # $1 = optional base kit to seed the pack with
   local d; d="$(mktemp -d "${TMPDIR:-/tmp}/kogitsune.tune.XXXXXX")"
   trap 'kog_cleanup "$d"' EXIT INT TERM
   bc --list > "$d/list.json"
-  # seed membership from a base kit if named, else start from scratch (pinned only)
+  # seed membership + model from a base kit if named, else start from scratch (pinned only)
   if [[ -n "${1:-}" ]]; then
     jq --arg k "$1" '.kit_info[$k] // {mcp:[],skills:[]} | {mcp:(.mcp//[]), skills:(.skills//[])}' \
       "$d/list.json" > "$d/state.json"
+    jq -r --arg k "$1" '.kit_info[$k].model // empty' "$d/list.json" > "$d/model"
   else
     echo '{"mcp":[],"skills":[]}' > "$d/state.json"
+    : > "$d/model"
   fi
   echo 1 > "$d/presets"   # preset 🦊 rows visible by default (ctrl-p toggles)
   # space/tab flip the focused item, then reload the rows (updated glyphs) + refresh the bar
   local toggle="execute-silent($self __tune_toggle $d {2} {3})+reload($self __tune_rows $d)+refresh-preview"
   local flip="execute-silent($self __tune_presets $d)+reload($self __tune_rows $d)+refresh-preview"
+  local cycle="execute-silent($self __tune_model $d)+refresh-preview"   # ctrl-m == enter, so ctrl-o
   local pick key
   pick="$("$self" __tune_rows "$d" | \
     "$FZF" --ansi --delimiter='\t' --with-nth=1 --nth=1 --track --id-nth=2,3 \
         --prompt='pack › ' --height=85% --border --reverse \
         --expect=ctrl-s \
-        --header=$'space/tab toggle · 🦊 row loads a preset · ctrl-p hide presets · enter launch · ctrl-s save · 🧠 🛡 🕸 always ride along' \
-        --bind="space:$toggle" --bind="tab:$toggle" --bind="ctrl-p:$flip" \
+        --header=$'space/tab toggle · 🦊 row loads a preset · ctrl-o model · ctrl-p hide presets · enter launch · ctrl-s save · 🧠 🛡 🕸 always ride along' \
+        --bind="space:$toggle" --bind="tab:$toggle" --bind="ctrl-p:$flip" --bind="ctrl-o:$cycle" \
         --preview="$self __tune_preview $d" --preview-window='right:48%:wrap' )" \
     || { kog_cleanup "$d"; trap - EXIT INT TERM; exit 0; }
   key="$(printf '%s\n' "$pick" | head -1)"        # first line is the --expect key (blank for enter)
   # the state file — not fzf's output — is the source of truth for the tuned pack
-  local mcps skills
+  local mcps skills mdl
   mcps="$(jq -r '.mcp|join(",")' "$d/state.json")"
   skills="$(jq -r '.skills|join(",")' "$d/state.json")"
+  mdl="$(cat "$d/model" 2>/dev/null || true)"
   kog_cleanup "$d"; trap - EXIT INT TERM
   if [[ "$key" == "ctrl-s" ]]; then
     local nm; printf 'save as kit name: ' >&2; read -r nm </dev/tty || exit 0
     [[ -z "$nm" ]] && exit 0
-    cmd_save "$nm" --mcp "$mcps" --skills "$skills"
+    cmd_save "$nm" --mcp "$mcps" --skills "$skills" --model "$mdl"
     return
   fi
   [[ -z "${KIT_DRY_RUN:-}" ]] && need claude
-  local manifest; manifest="$(resolve_to_manifest --mcp "$mcps" --skills "$skills")"
+  local manifest; manifest="$(resolve_to_manifest --mcp "$mcps" --skills "$skills" --model "$mdl")"
   launch_from_manifest "$manifest"
 }
 
@@ -369,6 +404,7 @@ main() {
     __tune_rows)           shift; cmd_tune_rows "$@" ;;
     __tune_toggle)         shift; cmd_tune_toggle "$@" ;;
     __tune_presets)        shift; cmd_tune_presets "$@" ;;
+    __tune_model)          shift; cmd_tune_model "$@" ;;
     __tune_preview)        shift; cmd_tune_preview "$@" ;;
     *)
       # kit <name> [-- claude args]

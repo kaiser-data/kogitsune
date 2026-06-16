@@ -56,6 +56,19 @@ grep -q -- "--model haiku hi" "$TMP/claude.log" && ok "forwards passthrough args
 [[ -z "$(mirrors)" ]] && ok "mirror cleaned up after launch (no exec leak)" || no "mirror LEAKED: $(mirrors)"
 [[ -z "$(seldirs)" ]] && ok "selection dir cleaned up" || no "sel dir leaked: $(seldirs)"
 
+echo "== model selection =="
+# db declares model: opus in the fixture -> launcher passes --model opus to claude
+"$ROOT/bin/kit" db >/dev/null 2>&1
+grep -q -- "--model opus" "$TMP/claude.log" && ok "kit-declared model passed to claude" || no "model not passed: $(grep ARGS "$TMP/claude.log")"
+# passthrough --model wins (kit model suppressed)
+"$ROOT/bin/kit" db -- --model haiku >/dev/null 2>&1
+grep -q -- "--model haiku" "$TMP/claude.log" && ! grep -q -- "--model opus --model haiku" "$TMP/claude.log" \
+  && ok "passthrough --model overrides the kit model" || no "passthrough override: $(grep ARGS "$TMP/claude.log")"
+# lean has no model -> no --model flag at all
+"$ROOT/bin/kit" lean >/dev/null 2>&1
+! grep -q -- "--model" "$TMP/claude.log" && ok "no --model when kit declares none" || no "spurious --model: $(grep ARGS "$TMP/claude.log")"
+clean_tmp
+
 echo "== mirror structure (inspect via KIT_DEBUG kept mirror) =="
 KIT_DEBUG=1 "$ROOT/bin/kit" db >/dev/null 2>&1
 MIR="$(mirrors | head -1)"
@@ -141,7 +154,19 @@ rows="$("$ROOT/bin/kit" __tune_rows "$TD" 2>/dev/null)"
 printf '%s\n' "$rows" | grep -q "supabase" && ok "items stay visible when presets hidden" || no "items vanished with presets"
 "$ROOT/bin/kit" __tune_presets "$TD"   # -> shown again
 printf '%s\n' "$("$ROOT/bin/kit" __tune_rows "$TD" 2>/dev/null)" | grep -q "preset" && ok "ctrl-p shows presets again" || no "presets did not return"
+# ctrl-o cycles the model override: default -> sonnet -> opus -> haiku -> default
+: > "$TD/model"
+"$ROOT/bin/kit" __tune_model "$TD"; [[ "$(cat "$TD/model")" == "sonnet" ]] && ok "ctrl-o: default→sonnet" || no "cycle1: $(cat "$TD/model")"
+"$ROOT/bin/kit" __tune_model "$TD"; "$ROOT/bin/kit" __tune_model "$TD"
+[[ "$(cat "$TD/model")" == "haiku" ]] && ok "ctrl-o: sonnet→opus→haiku" || no "cycle3: $(cat "$TD/model")"
+"$ROOT/bin/kit" __tune_model "$TD"; [[ -z "$(cat "$TD/model")" ]] && ok "ctrl-o: haiku→default wraps" || no "cycle wrap: $(cat "$TD/model")"
+printf '%s\n' "$("$ROOT/bin/kit" __tune_preview "$TD" 2>/dev/null)" | grep -q "model:  default" && ok "preview shows the model" || no "preview model line missing"
 rm -rf "$TD"
+
+# picker seeds the model from the base kit and carries it into the launch
+out="$(KIT_DRY_RUN=1 KOGITSUNE_FZF="$BIN/fzf_noop" "$ROOT/bin/kit" tune db 2>&1)"
+echo "$out" | grep -q -- "--model opus" && ok "tune seeds + launches with the kit's model" || no "tune model: $(echo "$out" | grep would)"
+clean_tmp
 
 echo "== completion helpers =="
 ln -sf "$ROOT/bin/kit" "$BIN/kit"   # so completion's `kit __kits` resolves on PATH

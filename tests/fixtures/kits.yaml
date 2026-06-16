@@ -17,7 +17,7 @@ catalog:
 
 kits:
   lean:     { mcp: [],                 skills: [] }
-  db:       { mcp: [supabase],         skills: [postgres-bp] }
-  db-heavy: { extends: db, mcp: ["+notion"] }
-  trimmed:  { extends: db, mcp: ["-supabase", "+inliney"], skills: ["-postgres-bp"] }
-  research: { mcp: [notion],           skills: [] }
+  db:       { model: opus, mcp: [supabase], skills: [postgres-bp] }
+  db-heavy: { extends: db, mcp: ["+notion"] }                       # inherits model: opus
+  trimmed:  { extends: db, model: haiku, mcp: ["-supabase", "+inliney"], skills: ["-postgres-bp"] }
+  research: { model: sonnet, mcp: [notion], skills: [] }

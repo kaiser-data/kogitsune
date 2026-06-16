@@ -61,8 +61,9 @@ The picker is a live two-pane `fzf` view for **tuning a pack**. Every item shows
 glyph for whether it's in the pack; **space**/**tab** toggles the focused one and the preview
 re-totals the weight instantly. A 🦊 **kit row loads its whole preset** — start from `db`, then
 drop `supabase` or add `context7` and launch the tuned set (or **ctrl-s** to save it as a new
-kit). **ctrl-p** hides the 🦊 preset rows when you just want to hand-pick items. `kit tune <name>`
-seeds the picker from a kit directly.
+kit). **ctrl-p** hides the 🦊 preset rows when you just want to hand-pick items, and **ctrl-o**
+cycles the model (default → sonnet → opus → haiku). `kit tune <name>` seeds the picker from a kit
+directly, carrying its model.
 
 ```
  pack › db                                     ┌─ preview ──────────────────────┐
@@ -71,10 +72,11 @@ seeds the picker from a kit directly.
   🦊 lean           ~0K   preset                 │ pack weight: ~13.2K tokens     │
 ▶ ✔ 🔴 supabase     ~10K  (mcp)   ← in pack      │  ▓▓▓▓▓▓▓▓▓░░░░░░░░░░░░░░        │
   ○ 🟠 notion       ~4K   (mcp)   ← toggle on    │  (lean = ~1.2K)                │
-  ✔ 🟡 postgres-bp  ~2K   (skill)                │                                │
-  ○ 🟢 frontend     ~1K   (skill)                │ mcp:    supabase               │
+  ✔ 🟡 postgres-bp  ~2K   (skill)                │ model:  opus  (ctrl-o cycles)  │
+  ○ 🟢 frontend     ~1K   (skill)                │                                │
+                                                 │ mcp:    supabase               │
                                                  │ skills: postgres-bp            │
- space/tab toggle · 🦊 row loads preset ·        │ pinned: memory · guardrails ·  │
+ space/tab · 🦊 loads preset · ctrl-o model ·     │ pinned: memory · guardrails ·  │
  ctrl-p hide presets · enter · ctrl-s save        │         graphify               │
                                                  └────────────────────────────────┘
 ```
@@ -172,9 +174,13 @@ catalog:
 
 kits:
   lean:     { mcp: [],          skills: [] }
-  db:       { mcp: [supabase],  skills: [postgres-bp] }
-  db-heavy: { extends: db, mcp: ["+context7"] }      # inherit db, add one more
+  db:       { model: opus, mcp: [supabase], skills: [postgres-bp] }   # per-kit model
+  db-heavy: { extends: db, mcp: ["+context7"] }      # inherit db (incl. model), add one more
 ```
+
+A kit's optional **`model:`** (`opus` · `sonnet` · `haiku`, or a full model id) sets the launch
+model. It's inherited via `extends`, overridable live in the picker with **ctrl-o**, and always
+beaten by an explicit `kit db -- --model <x>`. Omit it to use Claude Code's default.
 
 ## Status
 

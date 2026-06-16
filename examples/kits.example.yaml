@@ -26,10 +26,13 @@ catalog:
 
 # Named kits shown in the picker and launchable directly via `kit <name>`.
 # Kits compose: `extends:` inherits another kit; "+name"/"-name" add or remove items.
+# Optional `model:` per kit sets the launch model (opus|sonnet|haiku|full id); it's
+# inherited via `extends`, overridable live in the picker (ctrl-o), and always beaten
+# by an explicit `kit <name> -- --model <x>`. Omit it to use Claude Code's default.
 kits:
   lean:     { mcp: [],                 skills: [] }
-  db:       { mcp: [supabase],         skills: [postgres-bp] }
-  db-heavy: { extends: db, mcp: ["+context7"] }      # inherit db, add one more server
+  db:       { model: opus, mcp: [supabase], skills: [postgres-bp] }
+  db-heavy: { extends: db, mcp: ["+context7"] }      # inherit db (incl. model: opus), add a server
   n8n:      { mcp: [n8n-mcp],          skills: [n8n] }
-  frontend: { mcp: [],                 skills: [frontend-design] }
+  frontend: { model: sonnet, mcp: [], skills: [frontend-design] }
   research: { mcp: [notion, context7], skills: [] }

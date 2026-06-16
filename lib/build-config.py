@@ -80,7 +80,10 @@ def _apply_delta(names: list[str], entries: list[str]) -> list[str]:
 
 
 def resolve_kit(name: str, kits: dict, _seen: tuple = ()) -> dict:
-    """Return {'mcp': [...], 'skills': [...]} for a kit, resolving inheritance."""
+    """Return {'mcp': [...], 'skills': [...], 'model': str|None} for a kit.
+
+    `model` is inherited from `extends` unless the kit sets its own.
+    """
     if name not in kits:
         close = difflib.get_close_matches(name, list(kits), n=1)
         hint = f" (did you mean '{close[0]}'?)" if close else ""
@@ -90,12 +93,14 @@ def resolve_kit(name: str, kits: dict, _seen: tuple = ()) -> dict:
     spec = kits[name] or {}
     base_mcp: list[str] = []
     base_skills: list[str] = []
+    base_model: str | None = None
     if spec.get("extends"):
         base = resolve_kit(spec["extends"], kits, _seen + (name,))
-        base_mcp, base_skills = base["mcp"], base["skills"]
+        base_mcp, base_skills, base_model = base["mcp"], base["skills"], base["model"]
     return {
         "mcp": _apply_delta(base_mcp, spec.get("mcp", [])),
         "skills": _apply_delta(base_skills, spec.get("skills", [])),
+        "model": spec.get("model", base_model),
     }
 
 
@@ -154,8 +159,13 @@ def resolve_item(name: str, spec: dict, mcp_servers: dict, warnings: list[str]) 
 
 
 def build(config: dict, mcp_servers: dict, *, kit: str | None,
-          mcp_sel: list[str] | None, skills_sel: list[str] | None) -> dict:
-    """Resolve a selection into a full manifest. Pure."""
+          mcp_sel: list[str] | None, skills_sel: list[str] | None,
+          model: str | None = None) -> dict:
+    """Resolve a selection into a full manifest. Pure.
+
+    `model` overrides any kit-declared model (used by the picker's live override);
+    falls back to the resolved kit's model, then to the config-level default.
+    """
     warnings: list[str] = []
     catalog = config.get("catalog", {}) or {}
     cat_mcp = catalog.get("mcp", {}) or {}
@@ -163,11 +173,14 @@ def build(config: dict, mcp_servers: dict, *, kit: str | None,
     kits = config.get("kits", {}) or {}
     pinned = config.get("pinned", {}) or {}
 
+    kit_model: str | None = None
     if kit is not None:
         sel = resolve_kit(kit, kits)
         mcp_sel, skills_sel = sel["mcp"], sel["skills"]
+        kit_model = sel["model"]
     mcp_sel = mcp_sel or []
     skills_sel = skills_sel or []
+    resolved_model = model or kit_model or config.get("model")
 
     # validate references
     for n in mcp_sel:
@@ -205,6 +218,7 @@ def build(config: dict, mcp_servers: dict, *, kit: str | None,
     weight = sum(int(e.get("weight", 0) or 0) for e in items)
     return {
         "kit": kit,
+        "model": resolved_model,
         "pinned": pinned_entries,
         "items": items,
         "plugins": plugins,
@@ -233,14 +247,17 @@ def _fold(e: dict, plugins: dict, skill_srcs: list, imports: list, env: dict) ->
 
 # --- save a kit (comment-preserving, line-based) ----------------------------
 
-def render_kit_entry(name: str, mcp: list[str], skills: list[str]) -> str:
-    return (f"  {name}: {{ mcp: [{', '.join(mcp)}], "
+def render_kit_entry(name: str, mcp: list[str], skills: list[str],
+                     model: str | None = None) -> str:
+    model_part = f"model: {model}, " if model else ""
+    return (f"  {name}: {{ {model_part}mcp: [{', '.join(mcp)}], "
             f"skills: [{', '.join(skills)}] }}")
 
 
-def save_kit_text(text: str, name: str, mcp: list[str], skills: list[str]) -> str:
+def save_kit_text(text: str, name: str, mcp: list[str], skills: list[str],
+                  model: str | None = None) -> str:
     """Insert/replace a kit under the `kits:` block, preserving comments & order."""
-    entry = render_kit_entry(name, mcp, skills)
+    entry = render_kit_entry(name, mcp, skills, model)
     lines = text.splitlines()
     kits_idx = next((i for i, l in enumerate(lines) if re.match(r"^kits:\s*$", l)), None)
     if kits_idx is None:
@@ -284,6 +301,7 @@ def _parse_args(argv):
     p.add_argument("--mcp-on-demand", default="~/.claude/mcp-on-demand.json")
     p.add_argument("--mcp", default="", help="comma/space list (when no kit)")
     p.add_argument("--skills", default="", help="comma/space list (when no kit)")
+    p.add_argument("--model", default="", help="model override (e.g. opus|sonnet|haiku)")
     p.add_argument("--out-dir", help="dir to write mcp.json into (default: a temp dir)")
     p.add_argument("--dry-run", action="store_true", help="print manifest, write nothing")
     p.add_argument("--list", action="store_true",
@@ -304,7 +322,8 @@ def main(argv=None) -> int:
     if ns.save:
         path = expand(ns.config)
         text = open(path).read() if os.path.isfile(path) else ""
-        new = save_kit_text(text, ns.save, _split(ns.mcp), _split(ns.skills))
+        new = save_kit_text(text, ns.save, _split(ns.mcp), _split(ns.skills),
+                            ns.model or None)
         with open(path, "w") as fh:
             fh.write(new)
         sys.stderr.write(f"saved kit '{ns.save}' to {path}\n")
@@ -340,11 +359,12 @@ def main(argv=None) -> int:
                 m = build(config, mcp_servers, kit=kname, mcp_sel=None, skills_sel=None)
                 kit_info[kname] = {
                     "weight": m["weight"],
+                    "model": m["model"],
                     "mcp": [i["name"] for i in m["items"] if i["kind"] == "mcp"],
                     "skills": [i["name"] for i in m["items"] if i["kind"] != "mcp"],
                 }
             except Exception:
-                kit_info[kname] = {"weight": 0, "mcp": [], "skills": []}
+                kit_info[kname] = {"weight": 0, "model": None, "mcp": [], "skills": []}
         json.dump({"kits": config.get("kits", {}) or {},
                    "kit_info": kit_info,
                    "mcp": cat.get("mcp", {}) or {},
@@ -355,7 +375,8 @@ def main(argv=None) -> int:
         return 0
 
     manifest = build(config, mcp_servers, kit=ns.kit,
-                     mcp_sel=_split(ns.mcp), skills_sel=_split(ns.skills))
+                     mcp_sel=_split(ns.mcp), skills_sel=_split(ns.skills),
+                     model=ns.model or None)
 
     if not ns.dry_run:
         out_dir = expand(ns.out_dir) if ns.out_dir else None

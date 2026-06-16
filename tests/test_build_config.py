@@ -6,7 +6,7 @@ import pytest
 
 def test_resolve_kit_basic(buildcfg, config):
     sel = buildcfg.resolve_kit("db", config["kits"])
-    assert sel == {"mcp": ["supabase"], "skills": ["postgres-bp"]}
+    assert sel == {"mcp": ["supabase"], "skills": ["postgres-bp"], "model": "opus"}
 
 
 def test_resolve_kit_extends_add(buildcfg, config):
@@ -35,6 +35,37 @@ def test_resolve_kit_circular(buildcfg):
 
 def test_apply_delta_order_preserved(buildcfg):
     assert buildcfg._apply_delta(["x"], ["y", "+z", "-x"]) == ["y", "z"]
+
+
+# --- model selection --------------------------------------------------------
+
+def test_kit_model_in_manifest(buildcfg, config, servers):
+    m = buildcfg.build(config, servers, kit="db", mcp_sel=None, skills_sel=None)
+    assert m["model"] == "opus"
+
+
+def test_kit_model_inherited_via_extends(buildcfg, config):
+    assert buildcfg.resolve_kit("db-heavy", config["kits"])["model"] == "opus"
+
+
+def test_kit_model_child_overrides_parent(buildcfg, config):
+    assert buildcfg.resolve_kit("trimmed", config["kits"])["model"] == "haiku"
+
+
+def test_model_none_when_unset(buildcfg, config, servers):
+    m = buildcfg.build(config, servers, kit="lean", mcp_sel=None, skills_sel=None)
+    assert m["model"] is None
+
+
+def test_model_override_beats_kit(buildcfg, config, servers):
+    m = buildcfg.build(config, servers, kit="db", mcp_sel=None, skills_sel=None, model="sonnet")
+    assert m["model"] == "sonnet"  # picker override wins over the kit's opus
+
+
+def test_render_kit_entry_includes_model(buildcfg):
+    out = buildcfg.render_kit_entry("x", ["a"], ["b"], model="opus")
+    assert "model: opus" in out and "mcp: [a]" in out
+    assert "model" not in buildcfg.render_kit_entry("x", ["a"], ["b"])
 
 
 # --- full build -------------------------------------------------------------
