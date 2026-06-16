@@ -85,26 +85,63 @@ make_claude 7
 make_claude 0
 clean_tmp
 
-echo "== picker (stubbed fzf, TSV rows) =="
-cat > "$BIN/fzf_kit" <<'EOF'
+echo "== picker: tune a pack (state-file model) =="
+# fzf is stubbed: the picker's space/tab binds never fire, so the state file is
+# the source of truth. A no-op stub (enter on the focused row) means "launch the
+# pack as currently seeded". We exercise the seed + the internal toggle commands.
+cat > "$BIN/fzf_noop" <<'EOF'
 #!/usr/bin/env bash
-input="$(cat)"; echo ""; echo "$input" | awk -F'\t' '$2=="kit"&&$3=="db"'
+cat >/dev/null; echo ""   # consume rows; emit just the (blank=enter) --expect key
 EOF
-chmod +x "$BIN/fzf_kit"
-out="$(KIT_DRY_RUN=1 KOGITSUNE_FZF="$BIN/fzf_kit" "$ROOT/bin/kit" 2>&1)"
-echo "$out" | grep -q "kit=db" && ok "picker launches the selected kit" || no "picker kit-select: $(echo "$out" | tail -1)"
+chmod +x "$BIN/fzf_noop"
+
+# seed the picker from a kit -> launches that kit's resolved à la carte selection
+out="$(KIT_DRY_RUN=1 KOGITSUNE_FZF="$BIN/fzf_noop" "$ROOT/bin/kit" tune db 2>&1)"
+echo "$out" | grep -q "mcp=supabase" && ok "tune seeds the pack from a kit" || no "tune seed: $(echo "$out" | tail -1)"
+echo "$out" | grep -q "postgres-best-practices" && ok "tune seed carries the kit's skills" || no "tune seed skills: $(echo "$out" | grep would)"
 clean_tmp
-cat > "$BIN/fzf_alc" <<'EOF'
-#!/usr/bin/env bash
-input="$(cat)"; echo ""; echo "$input" | awk -F'\t' '($2=="mcp"&&$3=="supabase")||($2=="skill"&&$3=="postgres-bp")'
-EOF
-chmod +x "$BIN/fzf_alc"
-out="$(KIT_DRY_RUN=1 KOGITSUNE_FZF="$BIN/fzf_alc" "$ROOT/bin/kit" 2>&1)"
-echo "$out" | grep -q "mcp=supabase" && ok "picker à la carte resolves the selection" || no "picker à la carte: $(echo "$out" | tail -1)"
-clean_tmp
-# capture first (don't pipe kit into grep -q: its early exit SIGPIPEs kit under pipefail)
-pv="$("$ROOT/bin/kit" __preview "$(printf 'x\tmcp\tnotion\t4000')" "$(printf 'x\tskill\tpg\t2000')" 2>/dev/null)"
-printf '%s\n' "$pv" | grep -q "7.2K" && ok "preview sums selected weights (+baseline)" || no "preview weight sum"
+
+# internal toggle/rows/preview transitions, driven on a hand-built tune dir
+TD="$TMP/kogitsune.tune.t1"; mkdir -p "$TD"
+KOGITSUNE_CONFIG="$FIX/kits.yaml" KOGITSUNE_MCP_ON_DEMAND="$FIX/mcp-on-demand.json" \
+  python3 "$ROOT/lib/build-config.py" --config "$FIX/kits.yaml" \
+  --mcp-on-demand "$FIX/mcp-on-demand.json" --list > "$TD/list.json" 2>/dev/null
+echo '{"mcp":[],"skills":[]}' > "$TD/state.json"
+
+# toggling a kit row loads its whole preset
+"$ROOT/bin/kit" __tune_toggle "$TD" kit db
+jq -e '.mcp==["supabase"] and .skills==["postgres-bp"]' "$TD/state.json" >/dev/null \
+  && ok "toggling a 🦊 kit row loads its preset" || no "kit preset load: $(cat "$TD/state.json")"
+# rows reflect membership with a ✔ glyph and the bar sums the in-pack weights
+rows="$("$ROOT/bin/kit" __tune_rows "$TD" 2>/dev/null)"
+printf '%s\n' "$rows" | grep -qE '^✔ .*supabase' && ok "in-pack item renders a ✔ glyph" || no "glyph: $(printf '%s' "$rows" | grep supabase)"
+pv="$("$ROOT/bin/kit" __tune_preview "$TD" 2>/dev/null)"
+printf '%s\n' "$pv" | grep -q "13.2K" && ok "preview bar sums tuned pack (+baseline)" || no "preview weight sum: $(printf '%s\n' "$pv" | grep -i token)"
+# dropping a single item from the loaded preset
+"$ROOT/bin/kit" __tune_toggle "$TD" mcp supabase
+jq -e '.mcp==[] and .skills==["postgres-bp"]' "$TD/state.json" >/dev/null \
+  && ok "toggling an item drops it from the pack" || no "item drop: $(cat "$TD/state.json")"
+pv="$("$ROOT/bin/kit" __tune_preview "$TD" 2>/dev/null)"
+printf '%s\n' "$pv" | grep -q "3.2K" && ok "bar updates after dropping an item" || no "bar after drop: $(printf '%s\n' "$pv" | grep -i token)"
+# toggling the same item again re-adds it
+"$ROOT/bin/kit" __tune_toggle "$TD" mcp supabase
+jq -e '.mcp==["supabase"]' "$TD/state.json" >/dev/null && ok "re-toggling re-adds the item" || no "item re-add: $(cat "$TD/state.json")"
+# the empty 'lean' preset acts as a reset-to-pinned button
+"$ROOT/bin/kit" __tune_toggle "$TD" kit lean
+jq -e '.mcp==[] and .skills==[]' "$TD/state.json" >/dev/null && ok "the lean preset resets the pack" || no "lean reset: $(cat "$TD/state.json")"
+# 'lean' shows ✔ only when the pack is genuinely empty (not vacuously)
+"$ROOT/bin/kit" __tune_toggle "$TD" mcp supabase
+printf '%s\n' "$("$ROOT/bin/kit" __tune_rows "$TD" 2>/dev/null)" | grep -qE '^○ 🦊 lean' \
+  && ok "lean shows ○ once the pack is non-empty" || no "lean glyph: $("$ROOT/bin/kit" __tune_rows "$TD" 2>/dev/null | grep lean)"
+# ctrl-p hides/shows the 🦊 preset rows; items stay visible either way
+echo 1 > "$TD/presets"
+"$ROOT/bin/kit" __tune_presets "$TD"   # -> hidden
+rows="$("$ROOT/bin/kit" __tune_rows "$TD" 2>/dev/null)"
+! printf '%s\n' "$rows" | grep -q "preset" && ok "ctrl-p hides the 🦊 preset rows" || no "presets still shown: $(printf '%s\n' "$rows" | grep preset | head -1)"
+printf '%s\n' "$rows" | grep -q "supabase" && ok "items stay visible when presets hidden" || no "items vanished with presets"
+"$ROOT/bin/kit" __tune_presets "$TD"   # -> shown again
+printf '%s\n' "$("$ROOT/bin/kit" __tune_rows "$TD" 2>/dev/null)" | grep -q "preset" && ok "ctrl-p shows presets again" || no "presets did not return"
+rm -rf "$TD"
 
 echo "== completion helpers =="
 ln -sf "$ROOT/bin/kit" "$BIN/kit"   # so completion's `kit __kits` resolves on PATH

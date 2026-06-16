@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # kogitsune 🦊 — pack your kit, send the little fox off light.
 # Usage:
-#   kit                  interactive picker (fzf)
+#   kit                  interactive picker — tune a pack: toggle items on/off (fzf)
+#   kit tune <name>      open the picker pre-loaded with kit <name>, then add/drop items
 #   kit <name>           launch a named kit (lean|db|n8n|frontend|research|…)
 #   kit <name> --dry-run resolve + show the plan, launch nothing
 #   kit <name> -- ARGS   forward ARGS to `claude` (e.g. kit db -- --model opus "fix X")
@@ -213,69 +214,140 @@ cmd_doctor() {
   echo "  config validity:"; bc --list >/dev/null 2>&1 && echo "    ✔ parses" || echo "    ✘ parse error"
 }
 
-# fzf preview: sum the weights of the currently-selected TSV lines → live pack bar.
-# Args are full TSV lines (fields: display, kind, name, weight) passed via fzf {+}.
-cmd_preview() {
-  local total=0 kits="" mcps="" skills="" line kind name weight
-  for line in "$@"; do
-    IFS=$'\t' read -r _ kind name weight <<<"$line"
-    [[ "$weight" =~ ^[0-9]+$ ]] && total=$((total + weight))
-    case "$kind" in
-      kit)   kits="$kits $name" ;;
-      mcp)   mcps="$mcps $name" ;;
-      skill) skills="$skills $name" ;;
-    esac
-  done
+# ---- pack tuning (state-file driven picker) --------------------------------
+# fzf can't pre-check its own multi-select rows, so pack membership lives in a
+# state file and the picker re-renders the ✔/○ glyphs + weight bar on each toggle
+# via reload+refresh-preview. This lets a kit act as a loadable preset whose
+# items you then add to / drop individually. Session files under a kogitsune.tune.* dir:
+#   list.json  = cached `bc --list` (catalog + resolved kit_info)
+#   state.json = {"mcp":[...],"skills":[...]} — the current pack membership
+
+tune_total() {  # $1=tunedir -> echo summed weight of the in-pack catalog items
+  jq -r --slurpfile s "$1/state.json" '
+    ($s[0].mcp // []) as $m | ($s[0].skills // []) as $k |
+    [ (.mcp    | to_entries[] | select(.key as $x | $m | index($x)) | .value.weight // 0),
+      (.skills | to_entries[] | select(.key as $x | $k | index($x)) | .value.weight // 0)
+    ] | add // 0' "$1/list.json"
+}
+
+# presets visibility: a "0" in $d/presets hides the 🦊 kit rows (ctrl-p in the picker).
+tune_presets_shown() { [[ "$(cat "$1/presets" 2>/dev/null)" != "0" ]]; }
+
+# fzf reload source: TSV rows with a live ✔/○ glyph reflecting current membership.
+cmd_tune_rows() {  # $1=tunedir
+  local d="$1" show=true
+  tune_presets_shown "$d" || show=false
+  jq -r --slurpfile s "$d/state.json" --argjson show "$show" '
+    def pad($n): (. + "                    ")[0:$n];
+    ($s[0].mcp // []) as $m | ($s[0].skills // []) as $k |
+    def member($kind;$name): (if $kind=="mcp" then ($m|index($name)) else ($k|index($name)) end) != null;
+    def glyph($b): if $b then "✔" else "○" end;
+    ( ($m|length) + ($k|length) ) as $packsize |
+    (if $show then ( .kit_info | to_entries[]
+      | (((.value.mcp|length) + (.value.skills|length)) > 0) as $nonempty
+      | (((.value.mcp - $m | length)==0 and (.value.skills - $k | length)==0) and ($nonempty or $packsize==0)) as $on
+      | "\(glyph($on)) 🦊 \(.key|pad(13))  ~\((.value.weight/1000)|floor)K  preset\tkit\t\(.key)\t\(.value.weight)" ) else empty end),
+    ( .mcp | to_entries[]
+      | "\(glyph(member("mcp";.key))) \((.value.tag // "•")) \(.key|pad(14))  ~\((.value.weight//0)/1000|floor)K  (mcp)\tmcp\t\(.key)\t\(.value.weight // 0)" ),
+    ( .skills | to_entries[]
+      | "\(glyph(member("skill";.key))) \((.value.tag // "•")) \(.key|pad(14))  ~\((.value.weight//0)/1000|floor)K  (skill)\tskill\t\(.key)\t\(.value.weight // 0)" )
+  ' "$d/list.json"
+}
+
+# Flip preset-row visibility (ctrl-p). Atomic-ish single-byte write.
+cmd_tune_presets() {  # $1=tunedir
+  if tune_presets_shown "$1"; then echo 0 > "$1/presets"; else echo 1 > "$1/presets"; fi
+}
+
+# Flip one item's membership. A kit row loads its preset (union-add), or drops it
+# wholesale if every one of its items is already in the pack. Atomic write.
+cmd_tune_toggle() {  # $1=tunedir $2=kind $3=name
+  local d="$1" kind="$2" name="$3" tmp
+  tmp="$d/state.json.$$"
+  case "$kind" in
+    mcp|skill)
+      local key="mcp"; [[ "$kind" == "skill" ]] && key="skills"
+      if jq --arg n "$name" --arg key "$key" \
+          'if (.[$key] | index($n)) then .[$key] -= [$n] else .[$key] += [$n] end' \
+          "$d/state.json" > "$tmp" 2>/dev/null; then mv -f "$tmp" "$d/state.json"; else rm -f "$tmp"; fi
+      ;;
+    kit)
+      if jq --slurpfile l "$d/list.json" --arg k "$name" '
+        ($l[0].kit_info[$k] // {mcp:[],skills:[]}) as $kit |
+        (($kit.mcp|length) + ($kit.skills|length)) as $size |
+        (($kit.mcp - .mcp | length)==0 and ($kit.skills - .skills | length)==0) as $full |
+        if $size==0 then {mcp:[], skills:[]}                       # empty preset (lean) = reset
+        elif $full
+        then .mcp = (.mcp - $kit.mcp) | .skills = (.skills - $kit.skills)
+        else .mcp = (.mcp + ($kit.mcp - .mcp)) | .skills = (.skills + ($kit.skills - .skills)) end
+      ' "$d/state.json" > "$tmp" 2>/dev/null; then mv -f "$tmp" "$d/state.json"; else rm -f "$tmp"; fi
+      ;;
+  esac
+}
+
+# fzf preview pane: live weight bar + the tuned pack contents.
+cmd_tune_preview() {  # $1=tunedir
+  local d="$1" total; total="$(tune_total "$d")"
   echo "🦊 pack your kit"
   echo
   python3 "$LIB/context-est.py" --weights "$total" --width 24
   echo
-  [[ -n "$kits"   ]] && echo "kit:    ${kits# }"
-  [[ -n "$mcps"   ]] && echo "mcp:    ${mcps# }"
-  [[ -n "$skills" ]] && echo "skills: ${skills# }"
+  local mcps skills
+  mcps="$(jq -r '.mcp|join(" ")' "$d/state.json")"
+  skills="$(jq -r '.skills|join(" ")' "$d/state.json")"
+  [[ -n "$mcps"   ]] && echo "mcp:    $mcps"
+  [[ -n "$skills" ]] && echo "skills: $skills"
+  [[ -z "$mcps$skills" ]] && echo "(lean — pinned only)"
   echo
+  if tune_presets_shown "$d"; then
+    echo "space/tab toggles · a 🦊 kit row loads its preset · ctrl-p hides presets"
+  else
+    echo "space/tab toggles · ctrl-p shows 🦊 preset rows"
+  fi
   echo "pinned (always): memory · guardrails · graphify"
 }
 
-cmd_picker() {
+cmd_picker() {  # $1 = optional base kit to seed the pack with
   local FZF="${KOGITSUNE_FZF:-fzf}"
   command -v "$FZF" >/dev/null 2>&1 || die "missing dependency: fzf (needed for the picker; use 'kit <name>' instead)"
   need python3; need jq
   local self="$ROOT/bin/kit"
-  local list; list="$(bc --list)"
-  # TSV rows: <display>\t<kind>\t<name>\t<weight>  (only column 1 is shown/searched)
-  local rows; rows="$(echo "$list" | jq -r '
-    def pad($n): (. + "                    ")[0:$n];
-    ( .kit_info | to_entries[]
-      | "\("🦊 " + (.key|pad(13)))  ~\((.value.weight/1000)|floor)K  \(((.value.mcp + .value.skills)|join(" ")))\t" + "kit\t\(.key)\t\(.value.weight)" ),
-    ( .mcp | to_entries[]
-      | "\((.value.tag // "•") + " " + (.key|pad(16)))  ~\((.value.weight//0)/1000|floor)K  (mcp)\tmcp\t\(.key)\t\(.value.weight // 0)" ),
-    ( .skills | to_entries[]
-      | "\((.value.tag // "•") + " " + (.key|pad(16)))  ~\((.value.weight//0)/1000|floor)K  (skill)\tskill\t\(.key)\t\(.value.weight // 0)" )
-  ')"
+  local d; d="$(mktemp -d "${TMPDIR:-/tmp}/kogitsune.tune.XXXXXX")"
+  trap 'kog_cleanup "$d"' EXIT INT TERM
+  bc --list > "$d/list.json"
+  # seed membership from a base kit if named, else start from scratch (pinned only)
+  if [[ -n "${1:-}" ]]; then
+    jq --arg k "$1" '.kit_info[$k] // {mcp:[],skills:[]} | {mcp:(.mcp//[]), skills:(.skills//[])}' \
+      "$d/list.json" > "$d/state.json"
+  else
+    echo '{"mcp":[],"skills":[]}' > "$d/state.json"
+  fi
+  echo 1 > "$d/presets"   # preset 🦊 rows visible by default (ctrl-p toggles)
+  # space/tab flip the focused item, then reload the rows (updated glyphs) + refresh the bar
+  local toggle="execute-silent($self __tune_toggle $d {2} {3})+reload($self __tune_rows $d)+refresh-preview"
+  local flip="execute-silent($self __tune_presets $d)+reload($self __tune_rows $d)+refresh-preview"
   local pick key
-  pick="$(printf '%s\n' "$rows" | \
-    "$FZF" --multi --ansi --delimiter='\t' --with-nth=1 --nth=1 \
-        --prompt='pack › ' --height=80% --border --reverse --marker='✔ ' --pointer='▶' \
+  pick="$("$self" __tune_rows "$d" | \
+    "$FZF" --ansi --delimiter='\t' --with-nth=1 --nth=1 --track --id-nth=2,3 \
+        --prompt='pack › ' --height=85% --border --reverse \
         --expect=ctrl-s \
-        --header=$'space toggle · enter go · ctrl-s save · 🧠 memory + 🛡 guardrails + 🕸 graphify always ride along' \
-        --preview="$self __preview {+}" --preview-window='right:46%:wrap' )" || exit 0
+        --header=$'space/tab toggle · 🦊 row loads a preset · ctrl-p hide presets · enter launch · ctrl-s save · 🧠 🛡 🕸 always ride along' \
+        --bind="space:$toggle" --bind="tab:$toggle" --bind="ctrl-p:$flip" \
+        --preview="$self __tune_preview $d" --preview-window='right:48%:wrap' )" \
+    || { kog_cleanup "$d"; trap - EXIT INT TERM; exit 0; }
   key="$(printf '%s\n' "$pick" | head -1)"        # first line is the --expect key (blank for enter)
-  pick="$(printf '%s\n' "$pick" | tail -n +2)"
-  [[ -z "$pick" ]] && exit 0
-  # a chosen kit wins; otherwise gather à la carte mcp/skill selections (parse TSV fields)
-  local kitname mcps skills
-  kitname="$(printf '%s\n' "$pick" | awk -F'\t' '$2=="kit"{print $3; exit}')"
-  mcps="$(printf '%s\n' "$pick"   | awk -F'\t' '$2=="mcp"{print $3}'   | paste -sd, -)"
-  skills="$(printf '%s\n' "$pick" | awk -F'\t' '$2=="skill"{print $3}' | paste -sd, -)"
+  # the state file — not fzf's output — is the source of truth for the tuned pack
+  local mcps skills
+  mcps="$(jq -r '.mcp|join(",")' "$d/state.json")"
+  skills="$(jq -r '.skills|join(",")' "$d/state.json")"
+  kog_cleanup "$d"; trap - EXIT INT TERM
   if [[ "$key" == "ctrl-s" ]]; then
     local nm; printf 'save as kit name: ' >&2; read -r nm </dev/tty || exit 0
     [[ -z "$nm" ]] && exit 0
     cmd_save "$nm" --mcp "$mcps" --skills "$skills"
     return
   fi
-  if [[ -n "$kitname" ]]; then cmd_launch "$kitname"; return; fi
-  need claude
+  [[ -z "${KIT_DRY_RUN:-}" ]] && need claude
   local manifest; manifest="$(resolve_to_manifest --mcp "$mcps" --skills "$skills")"
   launch_from_manifest "$manifest"
 }
@@ -283,7 +355,8 @@ cmd_picker() {
 main() {
   local cmd="${1:-}"
   case "$cmd" in
-    ""|pick|picker)        cmd_picker ;;
+    "")                    cmd_picker ;;
+    pick|picker|tune)      shift; cmd_picker "$@" ;;
     ls|list)               cmd_ls ;;
     show)                  shift; cmd_show "$@" ;;
     save)                  shift; cmd_save "$@" ;;
@@ -292,8 +365,11 @@ main() {
     doctor)                cmd_doctor ;;
     help|-h|--help)        awk 'NR>1 && /^#/{sub(/^# ?/,"");print;next} NR>1{exit}' "$0" ;;
     __kits)                bc --list 2>/dev/null | jq -r '.kits|keys[]' 2>/dev/null ;;
-    __commands)            printf '%s\n' ls show save rm measure doctor help ;;
-    __preview)             shift; cmd_preview "$@" ;;
+    __commands)            printf '%s\n' ls show save rm measure tune doctor help ;;
+    __tune_rows)           shift; cmd_tune_rows "$@" ;;
+    __tune_toggle)         shift; cmd_tune_toggle "$@" ;;
+    __tune_presets)        shift; cmd_tune_presets "$@" ;;
+    __tune_preview)        shift; cmd_tune_preview "$@" ;;
     *)
       # kit <name> [-- claude args]
       local kit="$cmd"; shift

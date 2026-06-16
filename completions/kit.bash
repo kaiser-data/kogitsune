@@ -5,7 +5,7 @@ _kit() {
   local cur prev cmds kits
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
-  cmds="ls show save rm measure doctor help"
+  cmds="ls show save rm measure tune doctor help"
 
   if [[ ${COMP_CWORD} -eq 1 ]]; then
     kits="$(kit __kits 2>/dev/null)"
@@ -15,7 +15,7 @@ _kit() {
   fi
 
   case "${prev}" in
-    show|rm|measure)
+    show|rm|measure|tune)
       kits="$(kit __kits 2>/dev/null)"
       # shellcheck disable=SC2207
       COMPREPLY=( $(compgen -W "${kits}" -- "${cur}") )

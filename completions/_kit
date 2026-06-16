@@ -10,6 +10,7 @@ _kit() {
     'save:save a selection as a named kit'
     'rm:remove a saved kit'
     'measure:probe a kit and record real ctx tokens'
+    'tune:open the picker pre-loaded with a kit, then add/drop items'
     'doctor:check deps, config, auth'
     'help:show usage'
   )
@@ -22,7 +23,7 @@ _kit() {
   fi
 
   case "${words[2]}" in
-    show|rm|measure) _describe -t kits 'kit' kits ;;
+    show|rm|measure|tune) _describe -t kits 'kit' kits ;;
     save)            _message 'kit name' ;;
     *)               _values 'flag' '--dry-run' '--strict' ;;
   esac

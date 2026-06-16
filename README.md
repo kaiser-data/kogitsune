@@ -50,29 +50,37 @@ A **kit** is a reusable, named set of *skills + MCP servers*. Before a session y
 and nothing else**. Memory (claude-mem) and a small guardrails file are pinned and never toggle off.
 
 ```bash
-kit            # interactive picker (fzf)
+kit            # interactive picker (fzf) — tune a pack from scratch
+kit tune db    # open the picker pre-loaded with the DB kit, then add/drop items
 kit db         # send the fox off with the DB kit: +supabase +postgres-best-practices
 kit lean       # memory + guardrails only — the leanest possible start
 kit db -- --model opus "optimize this query"   # forward args straight to claude
 ```
 
-The picker is a live two-pane `fzf` view — pick a kit *or* toggle à la carte items, and the
-preview pane totals the pack weight as you go:
+The picker is a live two-pane `fzf` view for **tuning a pack**. Every item shows a `✔`/`○`
+glyph for whether it's in the pack; **space**/**tab** toggles the focused one and the preview
+re-totals the weight instantly. A 🦊 **kit row loads its whole preset** — start from `db`, then
+drop `supabase` or add `context7` and launch the tuned set (or **ctrl-s** to save it as a new
+kit). **ctrl-p** hides the 🦊 preset rows when you just want to hand-pick items. `kit tune <name>`
+seeds the picker from a kit directly.
 
 ```
- pack ›                                        ┌─ preview ──────────────────────┐
-▶ 🦊 db             ~12K  supabase postgres-bp  │ 🦊 pack your kit               │
-  🦊 db-heavy       ~13K  supabase context7 …   │                                │
-  🦊 n8n            ~16K  n8n-mcp n8n            │ pack weight: ~13.2K tokens     │
-  🦊 lean           ~0K                          │  ▓▓▓▓▓▓▓▓▓░░░░░░░░░░░░░░        │
-✔ 🔴 supabase       ~10K  (mcp)                  │  (lean = ~1.2K)                │
-  🟠 notion         ~4K   (mcp)                  │                                │
-✔ 🟡 postgres-bp    ~2K   (skill)                │ mcp:    supabase               │
-  🟢 frontend-design ~1K  (skill)                │ skills: postgres-bp            │
-                                                 │ pinned: memory · guardrails ·  │
- space toggle · enter go · ctrl-s save · …       │         graphify               │
+ pack › db                                     ┌─ preview ──────────────────────┐
+  🦊 db             ~12K  preset                 │ 🦊 pack your kit               │
+  🦊 db-heavy       ~16K  preset                 │                                │
+  🦊 lean           ~0K   preset                 │ pack weight: ~13.2K tokens     │
+▶ ✔ 🔴 supabase     ~10K  (mcp)   ← in pack      │  ▓▓▓▓▓▓▓▓▓░░░░░░░░░░░░░░        │
+  ○ 🟠 notion       ~4K   (mcp)   ← toggle on    │  (lean = ~1.2K)                │
+  ✔ 🟡 postgres-bp  ~2K   (skill)                │                                │
+  ○ 🟢 frontend     ~1K   (skill)                │ mcp:    supabase               │
+                                                 │ skills: postgres-bp            │
+ space/tab toggle · 🦊 row loads preset ·        │ pinned: memory · guardrails ·  │
+ ctrl-p hide presets · enter · ctrl-s save        │         graphify               │
                                                  └────────────────────────────────┘
 ```
+
+> Pack membership is tracked in a state file (not fzf's own multi-select) — that's what lets a
+> kit row act as a loadable preset and lets items render pre-ticked and individually removable.
 
 ## Why you'd want it
 
@@ -170,9 +178,9 @@ kits:
 
 ## Status
 
-🦊 **Working MVP core.** Resolver + manifest, pack-weight estimator, curated-mirror launcher, and
-`kit ls` / `show` / `doctor` / direct `kit <name>` all work and are tested. The `fzf` picker and
-`install.sh` round it out. See [`docs/spike/FINDINGS.md`](docs/spike/FINDINGS.md) for the validated
+🦊 **Working MVP core.** Resolver + manifest, pack-weight estimator, curated-mirror launcher,
+`kit ls` / `show` / `doctor` / direct `kit <name>`, and the `fzf` tuning picker (seed, toggle,
+preset-load) all work and are tested. `install.sh` rounds it out. See [`docs/spike/FINDINGS.md`](docs/spike/FINDINGS.md) for the validated
 mechanism and [`docs/PRIOR-ART.md`](docs/PRIOR-ART.md) for where this sits in the landscape.
 
 ## Development & testing
