@@ -23,7 +23,8 @@ _kit() {
   fi
 
   case "${words[2]}" in
-    show|rm|measure|tune) _describe -t kits 'kit' kits ;;
+    measure)         _describe -t kits 'kit' kits; _values 'flag' '--calibrate' ;;
+    show|rm|tune)    _describe -t kits 'kit' kits ;;
     save)            _message 'kit name' ;;
     *)               _values 'flag' '--dry-run' '--strict' ;;
   esac

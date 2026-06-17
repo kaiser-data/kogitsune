@@ -11,6 +11,7 @@
 #   kit save <name> --mcp a,b --skills x,y [--model m]  save a selection as a named kit
 #   kit rm <name>        remove a saved kit
 #   kit measure <name>   launch a one-shot probe; record real ctx tokens
+#   kit measure --calibrate  record the base Claude Code floor (kit-only weights)
 #   kit <name> --strict  refuse to launch if any reference is unresolved
 #   kit doctor           check deps, config, auth
 #   kit help
@@ -56,8 +57,31 @@ remember_kit() {  # $1=kit
   else rm -f "$tmp"; fi
 }
 
-measured_for() {  # $1=kit -> echoes measured tokens, or empty
-  jq -r --arg k "$1" '.[$k] // empty' "$STATE_DIR/measured.json" 2>/dev/null
+# NOTE: these run under `set -e`; each must exit 0 even when the file/key is absent,
+# or a `var="$(helper)"` assignment would abort the calling command.
+measured_for() {  # $1=kit -> echoes measured (raw total) tokens, or empty
+  jq -r --arg k "$1" '.[$k] // empty' "$STATE_DIR/measured.json" 2>/dev/null || true
+}
+
+floor_val() {  # echoes the calibrated base-CC floor (a number), or empty
+  local f; f="$(cat "$STATE_DIR/floor" 2>/dev/null || true)"
+  [[ "$f" =~ ^[0-9]+$ ]] && echo "$f" || true
+}
+
+# measured kit-only weight = raw total − base floor (clamped ≥0). Echoes the marginal
+# if both are known, else empty. $1=kit
+measured_marginal() {
+  local tot floor; tot="$(measured_for "$1")"; floor="$(floor_val)"
+  [[ "$tot" =~ ^[0-9]+$ && -n "$floor" ]] || return 0
+  local m=$((tot - floor)); ((m < 0)) && m=0; echo "$m"
+}
+
+# Run a one-shot haiku probe under a mirror+mcp; echo the total input ctx tokens.
+# --mcp-config kept LAST (it's variadic — see launch_from_manifest).
+probe_ctx() {  # $1=mirror $2=mcp.json
+  local out; out="$(CLAUDE_CONFIG_DIR="$1" claude -p --output-format=json --model haiku \
+      'Reply with exactly: PONG' --strict-mcp-config --mcp-config "$2" 2>/dev/null)"
+  echo "$out" | jq -r '((.usage.input_tokens//0)+(.usage.cache_creation_input_tokens//0)+(.usage.cache_read_input_tokens//0))'
 }
 
 pack_weight_line() {  # $1=manifest.json
@@ -145,27 +169,61 @@ cmd_launch() {  # $1=kit name, rest=claude passthrough (supports --dry-run, --st
   launch_from_manifest "$manifest" "$@"
 }
 
-cmd_measure() {  # launch a one-shot probe under the kit's mirror, record real ctx tokens
+# Measure the base Claude Code floor (no plugins/skills/MCP/guardrails) and record it.
+# Measured kit weights subtract this floor so they're comparable to catalog estimates.
+cmd_calibrate() {
   need python3; need jq; need claude
-  local kit="${1:?usage: kit measure <name>}"
+  echo "kit: calibrating base floor (bare Claude Code, no kit)…" >&2
+  local manifest; manifest="$(resolve_to_manifest lean)"
+  local mcp_path seldir; mcp_path="$(jq -r '.mcp_config_path' "$manifest")"; seldir="$(dirname "$manifest")"
+  local mirror; mirror="$(kog_build_mirror "$manifest")"
+  trap 'kog_cleanup "$mirror"; kog_cleanup "$seldir"' EXIT INT TERM
+  # strip everything kogitsune adds, leaving base CC only
+  jq '.enabledPlugins={}' "$mirror/settings.json" > "$mirror/s.tmp" && mv "$mirror/s.tmp" "$mirror/settings.json"
+  find "$mirror/skills" -mindepth 1 -exec rm -rf {} + 2>/dev/null || true
+  : > "$mirror/CLAUDE.md"
+  local ctx; ctx="$(probe_ctx "$mirror" "$mcp_path")"
+  kog_cleanup "$mirror"; kog_cleanup "$seldir"; trap - EXIT INT TERM
+  if ! [[ "$ctx" =~ ^[0-9]+$ ]] || [[ "$ctx" -eq 0 ]]; then
+    echo "kit: calibrate failed (no usage in probe output)" >&2; return 1
+  fi
+  mkdir -p "$STATE_DIR"; echo "$ctx" > "$STATE_DIR/floor"
+  echo "🦊 base floor = ${ctx} tokens  (base Claude Code: system prompt + tool schemas)"
+  echo "   recorded to $STATE_DIR/floor — 'kit measure' now reports kit-only weight"
+}
+
+cmd_measure() {  # launch a one-shot probe under the kit's mirror, record real ctx tokens
+  if [[ "${1:-}" == "--calibrate" ]]; then cmd_calibrate; return; fi
+  need python3; need jq; need claude
+  local kit="${1:?usage: kit measure <name> | kit measure --calibrate}"
   local manifest; manifest="$(resolve_to_manifest "$kit")"
-  local mcp_path est; mcp_path="$(jq -r '.mcp_config_path' "$manifest")"; est="$(jq -r '.weight' "$manifest")"
+  local mcp_path est seldir; mcp_path="$(jq -r '.mcp_config_path' "$manifest")"
+  est="$(jq -r '.weight' "$manifest")"; seldir="$(dirname "$manifest")"
   echo "kit: measuring '$kit' — launching a one-shot probe…" >&2
   local mirror; mirror="$(kog_build_mirror "$manifest")"
-  trap 'kog_cleanup "$mirror"' EXIT INT TERM
-  local out; out="$(CLAUDE_CONFIG_DIR="$mirror" claude -p --output-format=json --model haiku \
-      'Reply with exactly: PONG' --strict-mcp-config --mcp-config "$mcp_path" 2>/dev/null)"
-  kog_cleanup "$mirror"; trap - EXIT INT TERM
-  local ctx; ctx="$(echo "$out" | jq -r '((.usage.input_tokens//0)+(.usage.cache_creation_input_tokens//0)+(.usage.cache_read_input_tokens//0))')"
+  trap 'kog_cleanup "$mirror"; kog_cleanup "$seldir"' EXIT INT TERM
+  local ctx; ctx="$(probe_ctx "$mirror" "$mcp_path")"
+  kog_cleanup "$mirror"; kog_cleanup "$seldir"; trap - EXIT INT TERM
   if ! [[ "$ctx" =~ ^[0-9]+$ ]] || [[ "$ctx" -eq 0 ]]; then
-    echo "kit: measure failed — $(echo "$out" | jq -r '.result // "no output"')" >&2; return 1
+    echo "kit: measure failed — probe returned no usage" >&2; return 1
   fi
   mkdir -p "$STATE_DIR"
   local mf="$STATE_DIR/measured.json" cur="{}"; [[ -f "$mf" ]] && cur="$(cat "$mf")"
   local tmp="$mf.$$"
   if echo "$cur" | jq --arg k "$kit" --argjson c "$ctx" '.[$k]=$c' > "$tmp" 2>/dev/null; then
     mv -f "$tmp" "$mf"; else rm -f "$tmp"; fi
-  echo "🦊 kit '$kit':  measured = ${ctx} tokens   (catalog est ~${est} over the lean baseline)"
+  # report kit-only weight (total − floor) when calibrated, else nudge to calibrate.
+  # marginal includes the pinned trio, so compare it to the bar total (baseline + items),
+  # not the raw items-only catalog weight.
+  local floor marg est_bar; floor="$(floor_val)"
+  est_bar="$(ce --weights "$est" --json 2>/dev/null | jq -r '.total' 2>/dev/null || echo "$est")"
+  if [[ -n "$floor" ]]; then
+    marg="$(measured_marginal "$kit")"
+    echo "🦊 kit '$kit':  weight ≈ ${marg} tok  (measured ${ctx} − floor ${floor})   estimate ~${est_bar}"
+  else
+    echo "🦊 kit '$kit':  measured ${ctx} tok total  (estimate ~${est_bar} incl. baseline)"
+    echo "   tip: run 'kit measure --calibrate' once to report kit-only weight (minus base CC)"
+  fi
   echo "   recorded to $mf"
 }
 
@@ -211,19 +269,24 @@ cmd_show() {
        imports: (.imports|map(split("/")|last)), warnings}'
   # human pack-weight line goes to stderr so stdout stays valid JSON for piping
   local line; line="🦊 $(echo "$m" | jq -r .weight | xargs -I{} python3 "$LIB/context-est.py" --weights {})"
-  local meas; meas="$(measured_for "$kit")"
-  [[ -n "$meas" ]] && line="$line   · measured ${meas} tok"
+  local marg; marg="$(measured_marginal "$kit")"
+  if [[ -n "$marg" ]]; then line="$line   · measured ≈ ${marg} tok (kit-only)"
+  else local meas; meas="$(measured_for "$kit")"; [[ -n "$meas" ]] && line="$line   · measured ${meas} tok total"; fi
   echo "$line" >&2
 }
 
 cmd_ls() {
   need python3
   local meas="{}"; [[ -f "$STATE_DIR/measured.json" ]] && meas="$(cat "$STATE_DIR/measured.json")"
-  bc --list | jq -r --argjson m "$meas" '
+  local floor; floor="$(floor_val)"; floor="${floor:-0}"
+  # when calibrated (floor>0) the measured tag is kit-only (total − floor); else raw total
+  bc --list | jq -r --argjson m "$meas" --argjson f "$floor" '
     .kit_info as $ki |
     "KITS:", (.kits|to_entries[]| "  \(.key)"
        + (($ki[.key].model // "") as $md | if $md != "" then "  [\($md)]" else "" end)
-       + (($m[.key]) as $x | if $x then "  (measured ~\($x) tok)" else "" end)),
+       + (($m[.key]) as $x | if $x then
+            (if $f > 0 then "  (measured ≈\([$x - $f, 0]|max) tok)" else "  (measured ~\($x) tok total)" end)
+          else "" end)),
     "", "MCP (à la carte):", (.mcp|to_entries[]|"  \(.value.tag // "") \(.key)  ~\(.value.weight // 0)"),
     "", "SKILLS (à la carte):", (.skills|to_entries[]|"  \(.value.tag // "") \(.key)  ~\(.value.weight // 0)"),
     "", "PINNED (always on): \(.pinned|join(", "))"'
@@ -241,6 +304,9 @@ cmd_doctor() {
   elif security find-generic-password -s "Claude Code-credentials" -w >/dev/null 2>&1; then echo "  ✔ auth: keychain credentials readable";
   else echo "  ✘ auth: no API key and keychain unreadable — run 'claude /login'"; fi
   echo "  config validity:"; bc --list >/dev/null 2>&1 && echo "    ✔ parses" || echo "    ✘ parse error"
+  local floor; floor="$(floor_val)"
+  if [[ -n "$floor" ]]; then echo "  ✔ base floor: ~${floor} tok (calibrated; measured weights are kit-only)";
+  else echo "  • base floor: not calibrated — run 'kit measure --calibrate' for kit-only weights"; fi
 }
 
 # ---- pack tuning (state-file driven picker) --------------------------------

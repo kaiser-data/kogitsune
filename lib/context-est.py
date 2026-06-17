@@ -17,7 +17,12 @@ import argparse
 import json
 import sys
 
-LEAN_BASELINE = 1200  # approx tokens for pinned memory + guardrails + graphify
+# Marginal cost of the pinned trio (memory + guardrails + graphify) ON TOP of base
+# Claude Code. Calibrated from `kit measure`: a lean session measured ~24.9K total,
+# of which ~22.3K is base CC (system prompt + tool schemas) — see docs. The remaining
+# ~2.7K is what kogitsune actually pins. This is the bar's zero point; the ~22K base
+# floor is fixed for every session and is reported separately by `kit measure --calibrate`.
+LEAN_BASELINE = 2700  # approx tokens for pinned memory + guardrails + graphify
 
 # A rough ceiling used to scale the bar; selections above this just peg the bar full.
 BAR_FULL_AT = 30000

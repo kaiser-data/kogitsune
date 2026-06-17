@@ -15,7 +15,13 @@ _kit() {
   fi
 
   case "${prev}" in
-    show|rm|measure|tune)
+    measure)
+      kits="$(kit __kits 2>/dev/null)"
+      # shellcheck disable=SC2207
+      COMPREPLY=( $(compgen -W "${kits} --calibrate" -- "${cur}") )
+      return
+      ;;
+    show|rm|tune)
       kits="$(kit __kits 2>/dev/null)"
       # shellcheck disable=SC2207
       COMPREPLY=( $(compgen -W "${kits}" -- "${cur}") )

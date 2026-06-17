@@ -70,9 +70,9 @@ from a kit directly, carrying its model.
  pack › db                                     ┌─ preview ──────────────────────┐
   🦊 db             ~12K  preset                 │ 🦊 pack your kit               │
   🦊 db-heavy       ~16K  preset                 │                                │
-  🦊 lean           ~0K   preset                 │ pack weight: ~13.2K tokens     │
+  🦊 lean           ~0K   preset                 │ pack weight: ~14.7K tokens     │
 ▶ ✔ 🔴 supabase     ~10K  (mcp)   ← in pack      │  ▓▓▓▓▓▓▓▓▓░░░░░░░░░░░░░░        │
-  ○ 🟠 notion       ~4K   (mcp)   ← toggle on    │  (lean = ~1.2K)                │
+  ○ 🟠 notion       ~4K   (mcp)   ← toggle on    │  (lean = ~2.7K)                │
   ✔ 🟡 postgres-bp  ~2K   (skill)                │ model:  opus  (ctrl-o cycles)  │
   ○ 🟢 frontend     ~1K   (skill)                │                                │
                                                  │ mcp:    supabase               │
@@ -91,6 +91,9 @@ from a kit directly, carrying its model.
   for the task that needs it. kogitsune is what makes "demote everything to on-demand" actually ergonomic.
 - **Memory always rides along.** The one thing you always want is pinned — never a toggle, never a tax.
 - **See the pack weight before you launch.** Every item shows a context-cost hint; a live bar totals it.
+  Hints are estimates over the ~2.7K pinned baseline; `kit measure` records the real number, and
+  `kit measure --calibrate` subtracts the fixed ~22K base Claude Code floor (system prompt + tool
+  schemas) so a kit's *own* cost is what you see.
 - **Kits are reusable and shareable.** One `kits.yaml`; `kit db` for the 90% path, the picker for ad-hoc.
 - **Non-destructive & reversible.** Your real `~/.claude` is never edited. Each session runs in a
   throwaway mirror that's deleted on exit.
@@ -137,7 +140,8 @@ kit doctor        # check deps, config, auth
 kit ls            # list kits + à la carte catalog
 kit show db       # what would the db kit pack? (no launch)
 kit db --dry-run  # resolve + print the exact claude command, launch nothing
-kit measure db    # launch a one-shot probe and record the kit's real ctx tokens
+kit measure --calibrate  # one-time: record the base Claude Code floor (~22K)
+kit measure db    # probe the kit; reports kit-only weight (measured − floor)
 kit save mine --mcp supabase,notion --skills postgres-bp   # save a reusable kit
 kit db            # launch it
 kit               # or pick interactively (fzf) — ctrl-s in the picker saves a kit

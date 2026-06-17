@@ -145,13 +145,13 @@ jq -e '.mcp==["supabase"] and .skills==["postgres-bp"]' "$TD/state.json" >/dev/n
 rows="$("$ROOT/bin/kit" __tune_rows "$TD" 2>/dev/null)"
 printf '%s\n' "$rows" | grep -qE '^✔ .*supabase' && ok "in-pack item renders a ✔ glyph" || no "glyph: $(printf '%s' "$rows" | grep supabase)"
 pv="$("$ROOT/bin/kit" __tune_preview "$TD" 2>/dev/null)"
-printf '%s\n' "$pv" | grep -q "13.2K" && ok "preview bar sums tuned pack (+baseline)" || no "preview weight sum: $(printf '%s\n' "$pv" | grep -i token)"
+printf '%s\n' "$pv" | grep -q "14.7K" && ok "preview bar sums tuned pack (+baseline)" || no "preview weight sum: $(printf '%s\n' "$pv" | grep -i token)"
 # dropping a single item from the loaded preset
 "$ROOT/bin/kit" __tune_toggle "$TD" mcp supabase
 jq -e '.mcp==[] and .skills==["postgres-bp"]' "$TD/state.json" >/dev/null \
   && ok "toggling an item drops it from the pack" || no "item drop: $(cat "$TD/state.json")"
 pv="$("$ROOT/bin/kit" __tune_preview "$TD" 2>/dev/null)"
-printf '%s\n' "$pv" | grep -q "3.2K" && ok "bar updates after dropping an item" || no "bar after drop: $(printf '%s\n' "$pv" | grep -i token)"
+printf '%s\n' "$pv" | grep -q "4.7K" && ok "bar updates after dropping an item" || no "bar after drop: $(printf '%s\n' "$pv" | grep -i token)"
 # toggling the same item again re-adds it
 "$ROOT/bin/kit" __tune_toggle "$TD" mcp supabase
 jq -e '.mcp==["supabase"]' "$TD/state.json" >/dev/null && ok "re-toggling re-adds the item" || no "item re-add: $(cat "$TD/state.json")"
@@ -201,6 +201,26 @@ rm -rf "$TD"
 # picker seeds the model from the base kit and carries it into the launch
 out="$(KIT_DRY_RUN=1 KOGITSUNE_FZF="$BIN/fzf_noop" "$ROOT/bin/kit" tune db 2>&1)"
 echo "$out" | grep -q -- "--model opus" && ok "tune seeds + launches with the kit's model" || no "tune model: $(echo "$out" | grep would)"
+clean_tmp
+
+echo "== measured weight: floor calibration math =="
+SD="$TMP/state/kogitsune"; mkdir -p "$SD"
+echo '{"db":25000}' > "$SD/measured.json"
+# uncalibrated: ls/show report the raw total
+"$ROOT/bin/kit" ls 2>/dev/null | grep -q "measured ~25000 tok total" && ok "ls shows raw total when uncalibrated" || no "ls raw: $("$ROOT/bin/kit" ls 2>/dev/null | grep db)"
+# calibrated: measured tag becomes kit-only (total − floor)
+echo 22000 > "$SD/floor"
+"$ROOT/bin/kit" ls 2>/dev/null | grep -q "measured ≈3000 tok" && ok "ls subtracts floor (kit-only)" || no "ls marginal: $("$ROOT/bin/kit" ls 2>/dev/null | grep db)"
+"$ROOT/bin/kit" show db 2>&1 >/dev/null | grep -q "measured ≈ 3000 tok (kit-only)" && ok "show reports kit-only weight" || no "show marginal: $("$ROOT/bin/kit" show db 2>&1 >/dev/null | tail -1)"
+# floor larger than a measurement clamps to 0, never negative
+echo '{"db":21000}' > "$SD/measured.json"
+"$ROOT/bin/kit" ls 2>/dev/null | grep -q "measured ≈0 tok" && ok "marginal clamps at 0" || no "clamp: $("$ROOT/bin/kit" ls 2>/dev/null | grep db)"
+# doctor surfaces the calibrated floor
+"$ROOT/bin/kit" doctor 2>/dev/null | grep -q "base floor: ~22000 tok" && ok "doctor shows calibrated floor" || no "doctor floor: $("$ROOT/bin/kit" doctor 2>/dev/null | grep -i floor)"
+rm -rf "$SD"
+# measure --calibrate routes to the calibrator (fake claude → graceful failure, no crash)
+out="$("$ROOT/bin/kit" measure --calibrate 2>&1)"; rc=$?
+echo "$out" | grep -q "calibrating base floor" && ok "measure --calibrate routes to calibrator" || no "calibrate route: $out"
 clean_tmp
 
 echo "== completion helpers =="
