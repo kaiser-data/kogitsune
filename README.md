@@ -12,42 +12,48 @@
 
 # kogitsune 🦊
 
-**A session launcher for [Claude Code](https://code.claude.com) that loads only the skills + MCP your task needs.**
-Memory always rides along. Everything else is a choice.
+### Start every [Claude Code](https://code.claude.com) session lean — then pack in *exactly* the skills + MCP your task needs.
+
+One keystroke. Memory always rides along. Everything else is a choice.
+
+```bash
+kit db      # 🦊 off you go: memory + guardrails + supabase + postgres — nothing else
+kit         # …or open the picker, toggle what you want, watch the token cost live
+```
 
 </div>
 
 ---
 
-## The problem
+## Why you'll love it
 
-Claude Code **front-loads everything into every session** — every installed skill's description, every
-configured MCP server's tool schemas, your whole `CLAUDE.md`. You pay that token cost on a *"hello"*
-exactly like on a refactor, and the model wades through instructions it doesn't need.
+- ⚡ **Lighter sessions, more room to work.** Stop paying for every installed skill and MCP schema on a
+  *"hello"*. Pack a focused kit and keep the context window for the actual task.
+- 🎯 **A sharper model.** Fewer competing instructions in context means Claude stays on-task instead of
+  wading through tools it'll never call. Less noise in → better answers out.
+- 🦊 **Memory never leaves your side.** claude-mem and your guardrails are pinned to *every* session — the
+  things you always want are never a toggle, never a tax.
+- 🎛️ **One picker for skills *and* MCP.** Toggle items, watch the pack weight re-total live, pick your
+  model, hit enter. There's no native Claude Code feature that does this.
+- 💾 **Build a muscle-memory of kits.** `kit db` for the 90% path; tune-and-save your own in seconds.
+  Commit a `kits.yaml` and your whole team launches the same way.
+- ♻️ **Zero risk to your setup.** Your real `~/.claude` is never touched. Every session runs in a
+  throwaway mirror that's wiped on exit — credentials and all.
 
 ```
-   ┌──────────────────────── a normal "hello" session ────────────────────────┐
-   │  base tools  ·  ALL skills  ·  ALL MCP schemas  ·  full CLAUDE.md  ·  …   │
-   │  ███████████████████████████████████████████████████████████  ~24K ctx   │
-   └───────────────────────────────────────────────────────────────────────────┘
-
-   ┌──────────── the same session, packed by the little fox 🦊 ───────────────┐
-   │  base tools  ·  memory  ·  guardrails  ·  + only what you picked          │
-   │  ████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  lean floor   │
-   └───────────────────────────────────────────────────────────────────────────┘
+   a normal "hello" session                    the same session, packed by the fox 🦊
+   ┌───────────────────────────────┐           ┌───────────────────────────────┐
+   │ base · ALL skills · ALL MCP ·  │           │ base · memory · guardrails ·   │
+   │ full CLAUDE.md                 │           │ + only what you picked         │
+   │ ████████████████████  heavy    │   ──▶     │ ██████░░░░░░░░░░░░░░  lean      │
+   └───────────────────────────────┘           └───────────────────────────────┘
 ```
 
-There's no native way to say *"load only these skills for this session"* — it's an open, unresolved
-Claude Code feature request ([#39749](https://github.com/anthropics/claude-code/issues/39749),
-[#26838](https://github.com/anthropics/claude-code/issues/26838),
-[#39686](https://github.com/anthropics/claude-code/issues/39686)). MCP toggling exists; **a unified
-picker for skills *and* MCP, with memory pinned, does not.** That's the gap kogitsune fills.
+## Pack a kit, send the fox off
 
-## The idea: pack a kit
-
-A **kit** is a reusable, named set of *skills + MCP servers*. Before a session you pick one — `lean`,
-`db`, `n8n`, `frontend`, `research`, or your own — and the fox starts `claude` carrying **exactly that,
-and nothing else**. Memory (claude-mem) and a small guardrails file are pinned and never toggle off.
+A **kit** is a reusable, named set of *skills + MCP servers*. Pick one — `lean`, `db`, `n8n`,
+`frontend`, `research`, or your own — and the fox starts `claude` carrying **exactly that, and nothing
+else**. Memory (claude-mem) and a small guardrails file are pinned and never toggle off.
 
 ```bash
 kit            # interactive picker (fzf) — tune a pack from scratch
@@ -57,14 +63,12 @@ kit lean       # memory + guardrails only — the leanest possible start
 kit db -- --model opus "optimize this query"   # forward args straight to claude
 ```
 
-The picker is a live two-pane `fzf` view for **tuning a pack**. Every item shows a `✔`/`○`
-glyph for whether it's in the pack; **space**/**tab** toggles the focused one and the preview
-re-totals the weight instantly. A 🦊 **kit row loads its whole preset** — start from `db`, then
-drop `supabase` or add `context7` and launch the tuned set (or **ctrl-s** to save it as a new
-kit). **ctrl-p** hides the 🦊 preset rows when you just want to hand-pick items, and **ctrl-o**
-cycles the model (default → sonnet → opus → haiku). Loading a preset adopts that kit's model too —
-unless you've already picked one with ctrl-o, which then sticks. `kit tune <name>` seeds the picker
-from a kit directly, carrying its model.
+### Tune it in the picker
+
+A live two-pane `fzf` view. Every item shows a `✔`/`○` glyph for whether it's in the pack; **space/tab**
+toggles the focused one and the preview **re-totals the weight instantly**. A 🦊 **kit row loads its whole
+preset** — start from `db`, drop `supabase`, add `context7`, and launch the tuned set (or **ctrl-s** to
+save it as a new kit).
 
 ```
  pack › db                                     ┌─ preview ──────────────────────┐
@@ -82,21 +86,35 @@ from a kit directly, carrying its model.
                                                  └────────────────────────────────┘
 ```
 
-> Pack membership is tracked in a state file (not fzf's own multi-select) — that's what lets a
-> kit row act as a loadable preset and lets items render pre-ticked and individually removable.
+| key | does |
+|---|---|
+| **space** / **tab** | toggle the focused item in/out of the pack |
+| **🦊 kit row** | load that kit's whole preset (toggle again to drop it) |
+| **ctrl-o** | cycle the model: default → sonnet → opus → haiku |
+| **ctrl-p** | hide the preset rows to hand-pick items only |
+| **ctrl-s** | save the tuned pack as a new named kit |
+| **enter** | launch it 🦊 |
 
-## Why you'd want it
+> Loading a preset adopts that kit's model too — unless you've already picked one with ctrl-o, which
+> then sticks. (Pack membership lives in a state file, not fzf's multi-select — that's what lets kit
+> rows act as loadable presets and items render pre-ticked and individually removable.)
 
-- **Lean by default, heavy on demand.** Keep your everyday sessions tiny; pull in a 12K-token MCP only
-  for the task that needs it. kogitsune is what makes "demote everything to on-demand" actually ergonomic.
-- **Memory always rides along.** The one thing you always want is pinned — never a toggle, never a tax.
-- **See the pack weight before you launch.** Every item shows a context-cost hint; a live bar totals it.
-  Hints are estimates over the ~2.7K pinned baseline; `kit measure` records the real number, and
-  `kit measure --calibrate` subtracts the fixed ~22K base Claude Code floor (system prompt + tool
-  schemas) so a kit's *own* cost is what you see.
-- **Kits are reusable and shareable.** One `kits.yaml`; `kit db` for the 90% path, the picker for ad-hoc.
-- **Non-destructive & reversible.** Your real `~/.claude` is never edited. Each session runs in a
-  throwaway mirror that's deleted on exit.
+### Know the cost before you launch
+
+Every item carries a token-weight hint and the bar totals your pack live — so the trade-off is always
+on screen. Want the real number? `kit measure db` probes the actual session. And `kit measure --calibrate`
+records the fixed ~22K base Claude Code floor (system prompt + built-in tool schemas) once, so afterwards
+**measured weights show a kit's *own* cost** — apples to apples with the estimate.
+
+## The gap it fills
+
+Claude Code **front-loads everything into every session** — every installed skill's description, every
+configured MCP server's tool schemas, your whole `CLAUDE.md` — whether you're refactoring or just saying
+hi. There's no native way to say *"load only these skills for this session"*: it's an open, unresolved
+feature request ([#39749](https://github.com/anthropics/claude-code/issues/39749),
+[#26838](https://github.com/anthropics/claude-code/issues/26838),
+[#39686](https://github.com/anthropics/claude-code/issues/39686)). MCP toggling exists; **a unified
+picker for skills *and* MCP, with memory pinned, does not.** That's kogitsune.
 
 ## Design principles
 
