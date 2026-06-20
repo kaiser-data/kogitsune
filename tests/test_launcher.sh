@@ -70,10 +70,11 @@ grep -q -- "--model haiku" "$TMP/claude.log" && ! grep -q -- "--model opus --mod
 clean_tmp
 
 # regression: --mcp-config is variadic, so it must come LAST or a stray passthrough
-# word (e.g. `kit db tune`) gets eaten as a phantom second config path.
-"$ROOT/bin/kit" db tune >/dev/null 2>&1
-grep -qE -- "tune --strict-mcp-config --mcp-config [^ ]+$" "$TMP/claude.log" \
-  && ok "stray passthrough can't poison --mcp-config (kit db tune)" || no "arg order: $(grep ARGS "$TMP/claude.log")"
+# word gets eaten as a phantom second config path. (Use a bare word that isn't the
+# `tune` alias, which now routes to the picker — see the alias test below.)
+"$ROOT/bin/kit" db zzz >/dev/null 2>&1
+grep -qE -- "zzz --strict-mcp-config --mcp-config [^ ]+$" "$TMP/claude.log" \
+  && ok "stray passthrough can't poison --mcp-config" || no "arg order: $(grep ARGS "$TMP/claude.log")"
 clean_tmp
 
 echo "== launch guards: never hand claude a bad mcp-config =="
@@ -128,6 +129,18 @@ chmod +x "$BIN/fzf_noop"
 out="$(KIT_DRY_RUN=1 KOGITSUNE_FZF="$BIN/fzf_noop" "$ROOT/bin/kit" tune db 2>&1)"
 echo "$out" | grep -q "mcp=supabase" && ok "tune seeds the pack from a kit" || no "tune seed: $(echo "$out" | tail -1)"
 echo "$out" | grep -q "postgres-best-practices" && ok "tune seed carries the kit's skills" || no "tune seed skills: $(echo "$out" | grep would)"
+clean_tmp
+
+# `kit <kit> tune` (object-then-verb) is an alias for the tuner, NOT a launch with prompt "tune".
+# picker path resolves à la carte (kit=(à la carte)); a real launch would say kit=db.
+out="$(KIT_DRY_RUN=1 KOGITSUNE_FZF="$BIN/fzf_noop" "$ROOT/bin/kit" db tune 2>&1)"
+echo "$out" | grep -q "kit=(à la carte)" && echo "$out" | grep -q "mcp=supabase" \
+  && ok "'kit <kit> tune' opens the tuner (alias)" || no "alias route: $(echo "$out" | grep would)"
+clean_tmp
+# but an explicit `kit <kit> -- tune` still launches with 'tune' as the prompt
+out="$(KIT_DRY_RUN=1 "$ROOT/bin/kit" db -- tune 2>&1)"
+echo "$out" | grep -q "kit=db" && echo "$out" | grep -q -- "tune --strict-mcp-config" \
+  && ok "'kit <kit> -- tune' still launches with the prompt" || no "passthrough tune: $(echo "$out" | grep -E 'kit=|claude ')"
 clean_tmp
 
 # internal toggle/rows/preview transitions, driven on a hand-built tune dir

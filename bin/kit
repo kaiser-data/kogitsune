@@ -3,6 +3,7 @@
 # Usage:
 #   kit                  interactive picker — tune a pack: toggle items on/off (fzf)
 #   kit tune <name>      open the picker pre-loaded with kit <name>, then add/drop items
+#   kit <name> tune      same thing, object-first (alias for `kit tune <name>`)
 #   kit <name>           launch a named kit (lean|db|n8n|frontend|research|…)
 #   kit <name> --dry-run resolve + show the plan, launch nothing
 #   kit <name> -- ARGS   forward ARGS to `claude` (e.g. kit db -- --model opus "fix X")
@@ -502,6 +503,10 @@ main() {
     *)
       # kit <name> [-- claude args]
       local kit="$cmd"; shift
+      # friendly alias: `kit <name> tune` (object-then-verb) == `kit tune <name>`.
+      # only when `tune` is the lone trailing token, so `kit <name> -- tune` (an
+      # explicit prompt) still launches normally.
+      if [[ "${1:-}" == "tune" && $# -eq 1 ]]; then cmd_picker "$kit"; return; fi
       [[ "${1:-}" == "--" ]] && shift
       cmd_launch "$kit" "$@"
       ;;

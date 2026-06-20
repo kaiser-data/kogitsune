@@ -58,6 +58,7 @@ else**. Memory (claude-mem) and a small guardrails file are pinned and never tog
 ```bash
 kit            # interactive picker (fzf) — tune a pack from scratch
 kit tune db    # open the picker pre-loaded with the DB kit, then add/drop items
+kit db tune    # same thing, object-first (alias for `kit tune db`)
 kit db         # send the fox off with the DB kit: +supabase +postgres-best-practices
 kit lean       # memory + guardrails only — the leanest possible start
 kit db -- --model opus "optimize this query"   # forward args straight to claude
