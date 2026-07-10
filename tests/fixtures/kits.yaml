@@ -14,9 +14,11 @@ catalog:
     n8n:             { dir: "n8n-*", count: 7, weight: 4000, tag: "🟡" }
     frontend-design: { plugin: "frontend-design@claude-plugins-official", weight: 1000, tag: "🟢" }
     sc-commands:     { prefix: "sc:", weight: 4000, tag: "🟡" }
+    ecc-rules:       { rules: "ecc-common", weight: 1000, tag: "🟢" }   # gated rules pack
 
 kits:
   lean:     { mcp: [],                 skills: [] }
+  ruled:    { mcp: [],                 skills: [ecc-rules] }
   db:       { model: opus, mcp: [supabase], skills: [postgres-bp] }
   db-heavy: { extends: db, mcp: ["+notion"] }                       # inherits model: opus
   trimmed:  { extends: db, model: haiku, mcp: ["-supabase", "+inliney"], skills: ["-postgres-bp"] }

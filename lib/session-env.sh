@@ -4,8 +4,8 @@
 # ONLY the chosen skills + plugins + guardrails, with memory pinned, then cleans up.
 #
 # Strategy (validated in docs/spike/FINDINGS.md): symlink-mirror ~/.claude into a
-# private temp dir, overriding skills/, settings.json and CLAUDE.md; isolate MCP via
-# --strict-mcp-config; materialize credentials so auth survives the remapped dir.
+# private temp dir, overriding skills/, rules/, settings.json and CLAUDE.md; isolate
+# MCP via --strict-mcp-config; materialize credentials so auth survives the remapped dir.
 
 # Build the mirror. Args: $1=manifest.json  $2=real config dir (~/.claude)
 # Echoes the mirror path on stdout. Caller owns cleanup via kog_cleanup.
@@ -16,13 +16,16 @@ kog_build_mirror() {
   local mirror; mirror="$(mktemp -d "${TMPDIR:-/tmp}/kogitsune.XXXXXX")"
   chmod 700 "$mirror"
 
-  # 1. symlink every ~/.claude entry except the three we override
+  # 1. symlink every ~/.claude entry except the ones we override.
+  #    rules/ is EXCLUDED: the harness auto-loads <config>/rules/** into every
+  #    session, so rules packs are gated instead — selected ones ride in as
+  #    explicit session-CLAUDE.md imports (catalog kind: rules).
   local e b
   for e in "$rc"/* "$rc"/.[!.]*; do
     [[ -e "$e" ]] || continue
     b="$(basename "$e")"
     case "$b" in
-      skills|settings.json|CLAUDE.md) continue ;;
+      skills|settings.json|CLAUDE.md|rules) continue ;;
       *) ln -s "$e" "$mirror/$b" ;;
     esac
   done

@@ -39,10 +39,14 @@ printf '{"enabledPlugins":{"stale@x":true},"permissions":{"allow":[]},"env":{"KE
 printf '@should-not-appear\n' > "$HC/CLAUDE.md"
 printf '{"oauthAccount":{}}\n' > "$TMP/dotjson.json"
 
+# a rules dir in the fake ~/.claude must NOT be mirrored (auto-load gating)
+mkdir -p "$HC/rules"; printf 'leak-canary\n' > "$HC/rules/canary.md"
+
 export PATH="$BIN:$PATH"
 export KOGITSUNE_CONFIG="$FIX/kits.yaml"
 export KOGITSUNE_MCP_ON_DEMAND="$FIX/mcp-on-demand.json"
 export KOGITSUNE_SKILLS_DIR="$FIX/skills"
+export KOGITSUNE_RULES_DIR="$FIX/rules"
 export KOGITSUNE_HOME_CONFIG="$HC"
 export KOGITSUNE_HOME_DOTJSON="$TMP/dotjson.json"
 export XDG_STATE_HOME="$TMP/state"
@@ -86,6 +90,23 @@ out="$(KOGITSUNE_CONFIG="$TMP/broken.yaml" "$ROOT/bin/kit" db 2>&1)"; rc=$?
 [[ ! -s "$TMP/claude.log" ]] && ok "claude not invoked on resolve failure" || no "claude ran despite bad config"
 clean_tmp
 
+echo "== python resolver self-heals past a deps-less interpreter =="
+# KOGITSUNE_PYTHON points at a python that lacks PyYAML; the resolver must skip it
+# and fall through to a yaml-capable python3, so `kit ls` still works.
+cat > "$BIN/py-noyaml" <<'EOF'
+#!/usr/bin/env bash
+[[ "$*" == *"import yaml"* ]] && exit 1   # pretend PyYAML isn't installed here
+exit 0
+EOF
+chmod +x "$BIN/py-noyaml"
+out="$(KOGITSUNE_PYTHON="$BIN/py-noyaml" "$ROOT/bin/kit" ls 2>&1)"
+echo "$out" | grep -q "KITS:" && ok "resolver skips a no-PyYAML python and still runs" || no "py resolver self-heal: $out"
+# doctor reports the actually-resolved interpreter, not the broken one
+# capture first (piping kit into grep -q SIGPIPEs kit under pipefail)
+dout="$(KOGITSUNE_PYTHON="$BIN/py-noyaml" "$ROOT/bin/kit" doctor 2>&1)"
+grep -q "✔ PyYAML" <<<"$dout" && ok "doctor confirms a working PyYAML python" || no "doctor python: $(grep -i yaml <<<"$dout")"
+clean_tmp
+
 echo "== mirror structure (inspect via KIT_DEBUG kept mirror) =="
 KIT_DEBUG=1 "$ROOT/bin/kit" db >/dev/null 2>&1
 MIR="$(mirrors | head -1)"
@@ -100,6 +121,16 @@ grep -q "RULES.md" "$MIR/CLAUDE.md" && ok "guardrails import written to session 
 [[ -f "$MIR/.credentials.json" ]] && ok "creds materialized (fake keychain)" || no "creds not written"
 [[ "$(perms "$MIR/.credentials.json")" == "600" ]] && ok "creds file is mode 600" || no "creds perms = $(perms "$MIR/.credentials.json")"
 [[ -L "$MIR/.claude.json" ]] && ok ".claude.json relocated into mirror" || no ".claude.json missing"
+[[ ! -e "$MIR/rules" ]] && ok "rules/ excluded from mirror (auto-load gated)" || no "rules dir leaked into mirror"
+! grep -q "ecc-common" "$MIR/CLAUDE.md" && ok "unselected rules pack not imported" || no "rules pack leaked into CLAUDE.md"
+clean_tmp
+
+echo "== rules packs ride in via session CLAUDE.md imports =="
+KIT_DEBUG=1 "$ROOT/bin/kit" ruled >/dev/null 2>&1
+MIR="$(mirrors | head -1)"
+grep -q "rules/ecc-common/style.md" "$MIR/CLAUDE.md" && grep -q "rules/ecc-common/workflow.md" "$MIR/CLAUDE.md" \
+  && ok "selected rules pack imports every pack file" || no "rules imports missing: $(cat "$MIR/CLAUDE.md")"
+[[ ! -e "$MIR/rules" ]] && ok "rules/ still excluded when a pack is selected" || no "rules dir mirrored despite gating"
 clean_tmp
 
 echo "== ANTHROPIC_API_KEY fast-path skips creds =="
@@ -179,10 +210,11 @@ printf '%s\n' "$("$ROOT/bin/kit" __tune_rows "$TD" 2>/dev/null)" | grep -qE '^�
 echo 1 > "$TD/presets"
 "$ROOT/bin/kit" __tune_presets "$TD"   # -> hidden
 rows="$("$ROOT/bin/kit" __tune_rows "$TD" 2>/dev/null)"
-! printf '%s\n' "$rows" | grep -q "preset" && ok "ctrl-p hides the 🦊 preset rows" || no "presets still shown: $(printf '%s\n' "$rows" | grep preset | head -1)"
-printf '%s\n' "$rows" | grep -q "supabase" && ok "items stay visible when presets hidden" || no "items vanished with presets"
+grep -q "preset" <<<"$rows" || hid=1; [[ -n "${hid:-}" ]] && ok "ctrl-p hides the 🦊 preset rows" || no "presets still shown: $(grep preset <<<"$rows" | head -1)"; unset hid
+grep -q "supabase" <<<"$rows" && ok "items stay visible when presets hidden" || no "items vanished with presets"
 "$ROOT/bin/kit" __tune_presets "$TD"   # -> shown again
-printf '%s\n' "$("$ROOT/bin/kit" __tune_rows "$TD" 2>/dev/null)" | grep -q "preset" && ok "ctrl-p shows presets again" || no "presets did not return"
+rows="$("$ROOT/bin/kit" __tune_rows "$TD" 2>/dev/null)"
+grep -q "preset" <<<"$rows" && ok "ctrl-p shows presets again" || no "presets did not return"
 # ctrl-o cycles the model override: default -> sonnet -> opus -> haiku -> default
 : > "$TD/model"
 "$ROOT/bin/kit" __tune_model "$TD"; [[ "$(cat "$TD/model")" == "sonnet" ]] && ok "ctrl-o: default→sonnet" || no "cycle1: $(cat "$TD/model")"

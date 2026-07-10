@@ -109,6 +109,21 @@ def test_build_unknown_ref_warns(buildcfg, config, servers):
     assert any("did you mean 'supabase'" in w for w in m["warnings"])
 
 
+def test_build_rules_pack_folds_into_imports(buildcfg, config, servers):
+    m = buildcfg.build(config, servers, kit="ruled", mcp_sel=None, skills_sel=None)
+    imported = " ".join(m["imports"])
+    assert "style.md" in imported and "workflow.md" in imported  # every *.md in the pack
+    assert m["warnings"] == []
+    assert m["weight"] == 1000
+
+
+def test_rules_pack_missing_warns(buildcfg):
+    warnings = []
+    e = buildcfg.resolve_item("ghost", {"rules": "no-such-pack"}, {}, warnings)
+    assert e["paths"] == []
+    assert any("no *.md" in w for w in warnings)
+
+
 def test_deep_merge_overlay(buildcfg):
     base = {"kits": {"db": {"mcp": ["supabase"]}}, "catalog": {"mcp": {"a": {}}}}
     over = {"kits": {"x": {"mcp": []}}}

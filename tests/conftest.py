@@ -27,8 +27,9 @@ def ctxest():
 
 
 @pytest.fixture(autouse=True)
-def _skills_root(monkeypatch):
+def _fixture_roots(monkeypatch):
     monkeypatch.setenv("KOGITSUNE_SKILLS_DIR", str(FIXTURES / "skills"))
+    monkeypatch.setenv("KOGITSUNE_RULES_DIR", str(FIXTURES / "rules"))
 
 
 @pytest.fixture

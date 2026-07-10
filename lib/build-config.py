@@ -26,7 +26,7 @@ import re
 import sys
 
 # The typed-item registry. Each catalog/pinned entry carries exactly one of these.
-KINDS = ("plugin", "skill", "dir", "prefix", "mcp", "import", "env")
+KINDS = ("plugin", "skill", "dir", "prefix", "mcp", "import", "rules", "env")
 
 
 def expand(p: str) -> str:
@@ -36,6 +36,11 @@ def expand(p: str) -> str:
 def skills_root() -> str:
     """User-skills directory; overridable via env for tests / alternate roots."""
     return expand(os.environ.get("KOGITSUNE_SKILLS_DIR", "~/.claude/skills"))
+
+
+def rules_root() -> str:
+    """User-rules directory; overridable via env for tests / alternate roots."""
+    return expand(os.environ.get("KOGITSUNE_RULES_DIR", "~/.claude/rules"))
 
 
 def load_yaml(path: str) -> dict:
@@ -151,6 +156,15 @@ def resolve_item(name: str, spec: dict, mcp_servers: dict, warnings: list[str]) 
         entry["path"] = path
         if not os.path.isfile(path):
             warnings.append(f"import '{name}' -> missing file {path}")
+    elif kind == "rules":
+        # a rules pack: a dir of *.md under ~/.claude/rules (or absolute/~/$VAR).
+        # The mirror EXCLUDES the auto-loaded rules/ dir, so selected packs ride in
+        # as explicit session-CLAUDE.md imports — loaded when chosen, absent otherwise.
+        pat = spec["rules"]
+        base = expand(pat) if pat.startswith(("/", "~", "$")) else os.path.join(rules_root(), pat)
+        entry["paths"] = sorted(glob.glob(os.path.join(base, "*.md")))
+        if not entry["paths"]:
+            warnings.append(f"rules pack '{name}' -> no *.md files under {base}")
     elif kind == "env":
         entry["env"] = spec["env"]
     else:
@@ -241,6 +255,8 @@ def _fold(e: dict, plugins: dict, skill_srcs: list, imports: list, env: dict) ->
         skill_srcs.extend(e.get("srcs", []))
     elif e["kind"] == "import" and e.get("path"):
         imports.append(e["path"])
+    elif e["kind"] == "rules":
+        imports.extend(e.get("paths", []))
     elif e["kind"] == "env":
         env.update(e.get("env", {}))
 

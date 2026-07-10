@@ -5,7 +5,7 @@
 # Always rides along — never a toggle.
 pinned:
   memory:     { plugin: "claude-mem@thedotmack" }
-  guardrails: { import: "~/.claude/RULES.md" }
+  guardrails: { import: "~/.claude/rules/guardrails.md" }
   graphify:   { skill: "graphify" }
 
 # Catalog of selectable items, with rough context-weight hints (tokens) for the pack-weight bar.
@@ -19,10 +19,15 @@ catalog:
     kitsune-forge:    { weight: 2000,  tag: "🟡" }
     context7:         { weight: 1000,  tag: "🟢" }
   skills:
+    ecc:              { plugin: "ecc@ecc", weight: 4200, tag: "🟡" }  # full harness (measured; content defers until invoked)
+    # rules packs (dirs of *.md under ~/.claude/rules) are gated: the mirror excludes
+    # the auto-loaded rules/ dir; picking one imports its files into the session CLAUDE.md.
+    ecc-rules-common: { rules: "ecc/common",     weight: 4100, tag: "🟡" }
+    ecc-rules-ts:     { rules: "ecc/typescript", weight: 1700, tag: "🟢" }
+    ecc-rules-py:     { rules: "ecc/python",     weight: 1200, tag: "🟢" }
     postgres-bp:      { plugin: "postgres-best-practices@supabase-agent-skills", weight: 2000, tag: "🟡" }
     n8n:              { dir: "~/.claude/skills/n8n-*", count: 7, weight: 4000, tag: "🟡" }
     frontend-design:  { plugin: "frontend-design@claude-plugins-official", weight: 1000, tag: "🟢" }
-    sc-commands:      { prefix: "sc:", weight: 4000, tag: "🟡" }
 
 # Named kits shown in the picker and launchable directly via `kit <name>`.
 # Kits compose: `extends:` inherits another kit; "+name"/"-name" add or remove items.
@@ -36,3 +41,5 @@ kits:
   n8n:      { mcp: [n8n-mcp],          skills: [n8n] }
   frontend: { model: sonnet, mcp: [], skills: [frontend-design] }
   research: { mcp: [notion, context7], skills: [] }
+  ecc:      { mcp: [],                 skills: [ecc, ecc-rules-common] }  # full ECC harness + its core rules
+  deep:     { extends: ecc, mcp: ["+context7"] }                 # ECC + docs lookup for heavy builds
