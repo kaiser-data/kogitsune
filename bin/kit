@@ -36,16 +36,40 @@ STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/kogitsune"
 STATE_FILE="$STATE_DIR/last-kits.json"
 
 die() { echo "kit: $*" >&2; exit 1; }
-need() { command -v "$1" >/dev/null 2>&1 || die "missing dependency: $1"; }
+
+# Resolve a python3 that actually has PyYAML — a bare `python3` may point at an
+# interpreter without it (e.g. a fresh Homebrew python). Prefer $KOGITSUNE_PYTHON,
+# then plain python3, then common versioned names; fall back to python3 so errors
+# stay clear. Memoized in $PY.
+kog_python() {
+  local p
+  for p in ${KOGITSUNE_PYTHON:+"$KOGITSUNE_PYTHON"} python3 python3.13 python3.12 python3.11 python3.10; do
+    command -v "$p" >/dev/null 2>&1 || continue
+    "$p" -c "import yaml" >/dev/null 2>&1 && { echo "$p"; return 0; }
+  done
+  command -v python3 >/dev/null 2>&1 && { echo python3; return 0; }
+  return 1
+}
+PY="$(kog_python || true)"
+
+need() {
+  if [[ "$1" == python3 ]]; then
+    [[ -n "$PY" ]] || die "missing dependency: python3"
+    "$PY" -c "import yaml" >/dev/null 2>&1 || die \
+      "python ($PY) is missing PyYAML — run: $PY -m pip install pyyaml  (or set KOGITSUNE_PYTHON to a python3 that has it)"
+    return
+  fi
+  command -v "$1" >/dev/null 2>&1 || die "missing dependency: $1"
+}
 # auto-detect a project overlay (.kogitsune.yaml in cwd) merged over the base config.
 # bash 3.2-safe: no mapfile; empty-array expansion guarded for `set -u`.
 bc() {
   local ov=()
   [[ -f "./.kogitsune.yaml" ]] && ov=(--overlay "./.kogitsune.yaml")
-  python3 "$LIB/build-config.py" --config "$CONFIG" --mcp-on-demand "$MCP_ON_DEMAND" \
+  "$PY" "$LIB/build-config.py" --config "$CONFIG" --mcp-on-demand "$MCP_ON_DEMAND" \
     ${ov[@]+"${ov[@]}"} "$@"
 }
-ce() { python3 "$LIB/context-est.py" "$@"; }
+ce() { "$PY" "$LIB/context-est.py" "$@"; }
 
 remember_kit() {  # $1=kit
   mkdir -p "$STATE_DIR"
@@ -249,7 +273,7 @@ cmd_save() {  # kit save <name> [--mcp a,b] [--skills x,y]
     esac
   done
   local target; target="$(save_target)"
-  python3 "$LIB/build-config.py" --config "$target" --save "$name" \
+  "$PY" "$LIB/build-config.py" --config "$target" --save "$name" \
     --mcp "$mcp" --skills "$skills" --model "$model"
   echo "🦊 saved kit '$name' — launch it with: kit $name" >&2
 }
@@ -258,7 +282,7 @@ cmd_rm() {
   need python3
   local name="${1:?usage: kit rm <name>}"
   local target; target="$(save_target)"
-  python3 "$LIB/build-config.py" --config "$target" --rm "$name"
+  "$PY" "$LIB/build-config.py" --config "$target" --rm "$name"
 }
 
 cmd_show() {
@@ -269,7 +293,7 @@ cmd_show() {
        plugins: (.plugins|keys), skills: (.skills|map(split("/")|last)),
        imports: (.imports|map(split("/")|last)), warnings}'
   # human pack-weight line goes to stderr so stdout stays valid JSON for piping
-  local line; line="🦊 $(echo "$m" | jq -r .weight | xargs -I{} python3 "$LIB/context-est.py" --weights {})"
+  local line; line="🦊 $(echo "$m" | jq -r .weight | xargs -I{} "$PY" "$LIB/context-est.py" --weights {})"
   local marg; marg="$(measured_marginal "$kit")"
   if [[ -n "$marg" ]]; then line="$line   · measured ≈ ${marg} tok (kit-only)"
   else local meas; meas="$(measured_for "$kit")"; [[ -n "$meas" ]] && line="$line   · measured ${meas} tok total"; fi
@@ -295,10 +319,12 @@ cmd_ls() {
 
 cmd_doctor() {
   echo "kogitsune doctor 🦊"
-  for d in python3 jq claude fzf; do
+  for d in jq claude fzf; do
     if command -v "$d" >/dev/null 2>&1; then echo "  ✔ $d"; else echo "  ✘ $d (missing)"; fi
   done
-  python3 -c "import yaml" 2>/dev/null && echo "  ✔ PyYAML" || echo "  ✘ PyYAML (pip install pyyaml)"
+  if [[ -n "$PY" ]]; then echo "  ✔ python3: $PY"; else echo "  ✘ python3 (missing)"; fi
+  if [[ -n "$PY" ]] && "$PY" -c "import yaml" 2>/dev/null; then echo "  ✔ PyYAML";
+  else echo "  ✘ PyYAML — run: ${PY:-python3} -m pip install pyyaml (or set KOGITSUNE_PYTHON)"; fi
   [[ -f "$CONFIG" ]] && echo "  ✔ config: $CONFIG" || echo "  ✘ config missing"
   [[ -f "$MCP_ON_DEMAND" ]] && echo "  ✔ mcp-on-demand: $MCP_ON_DEMAND" || echo "  • mcp-on-demand: none (inline defs only)"
   if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then echo "  ✔ auth: ANTHROPIC_API_KEY set (creds copy skipped)";
@@ -411,7 +437,7 @@ cmd_tune_preview() {  # $1=tunedir
   local d="$1" total; total="$(tune_total "$d")"
   echo "🦊 pack your kit"
   echo
-  python3 "$LIB/context-est.py" --weights "$total" --width 24
+  "$PY" "$LIB/context-est.py" --weights "$total" --width 24
   echo
   local mdl note; mdl="$(cat "$d/model" 2>/dev/null || true)"
   if [[ -e "$d/model_locked" ]]; then note="(ctrl-o · locked to your choice)"; else note="(ctrl-o cycles · presets set it)"; fi
