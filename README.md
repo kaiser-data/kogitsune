@@ -180,12 +180,12 @@ and deleted on exit, or set `ANTHROPIC_API_KEY` to skip the copy entirely.
 ## Defining a kit
 
 `kits.yaml` is the single source of truth. Items are typed by one key (`plugin` · `skill` · `dir` ·
-`prefix` · `mcp` · `import` · `env`), and kits compose:
+`prefix` · `mcp` · `import` · `rules` · `env`), and kits compose:
 
 ```yaml
 pinned:                                   # always on, never a toggle
   memory:     { plugin: "claude-mem@thedotmack" }
-  guardrails: { import: "~/.claude/RULES.md" }
+  guardrails: { import: "~/.claude/rules/guardrails.md" }
   graphify:   { skill: "graphify" }
 
 catalog:
@@ -195,6 +195,8 @@ catalog:
   skills:
     postgres-bp: { plugin: "postgres-best-practices@supabase-agent-skills", weight: 2000, tag: "🟡" }
     n8n:         { dir: "n8n-*", count: 7, weight: 4000, tag: "🟡" }
+    ecc:         { plugin: "ecc@ecc", weight: 4200, gate_mcp: true }   # see below
+    ecc-rules:   { rules: "ecc/common", weight: 4100 }  # rules pack -> session CLAUDE.md imports
 
 kits:
   lean:     { mcp: [],          skills: [] }
@@ -205,6 +207,15 @@ kits:
 A kit's optional **`model:`** (`opus` · `sonnet` · `haiku`, or a full model id) sets the launch
 model. It's inherited via `extends`, overridable live in the picker with **ctrl-o**, and always
 beaten by an explicit `kit db -- --model <x>`. Omit it to use Claude Code's default.
+
+Two gating features close context leaks the harness would otherwise open:
+
+- **`rules` packs** — the harness auto-loads `<config>/rules/**` into every session, so the
+  mirror excludes `rules/` and selected packs ride in as explicit session-CLAUDE.md imports.
+- **`gate_mcp: true`** on a plugin — plugin-bundled MCP servers (the plugin's `.mcp.json`)
+  bypass `--strict-mcp-config`; gating mirrors the plugin per-entry without its `.mcp.json`,
+  so its skills/commands/hooks load but its MCP servers never spawn. Re-expose the server as
+  an inline-def `mcp` catalog item in the kits that genuinely want it.
 
 ## Status
 

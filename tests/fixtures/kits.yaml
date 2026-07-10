@@ -15,10 +15,12 @@ catalog:
     frontend-design: { plugin: "frontend-design@claude-plugins-official", weight: 1000, tag: "🟢" }
     sc-commands:     { prefix: "sc:", weight: 4000, tag: "🟡" }
     ecc-rules:       { rules: "ecc-common", weight: 1000, tag: "🟢" }   # gated rules pack
+    heavy:           { plugin: "heavy@heavymp", weight: 100, gate_mcp: true }  # plugin whose bundled MCP is gated
 
 kits:
   lean:     { mcp: [],                 skills: [] }
   ruled:    { mcp: [],                 skills: [ecc-rules] }
+  gated:    { mcp: [],                 skills: [heavy] }
   db:       { model: opus, mcp: [supabase], skills: [postgres-bp] }
   db-heavy: { extends: db, mcp: ["+notion"] }                       # inherits model: opus
   trimmed:  { extends: db, model: haiku, mcp: ["-supabase", "+inliney"], skills: ["-postgres-bp"] }

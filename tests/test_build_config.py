@@ -124,6 +124,18 @@ def test_rules_pack_missing_warns(buildcfg):
     assert any("no *.md" in w for w in warnings)
 
 
+def test_plugin_gate_mcp_folds_into_exclude(buildcfg, config, servers):
+    m = buildcfg.build(config, servers, kit="gated", mcp_sel=None, skills_sel=None)
+    assert m["plugin_mcp_exclude"] == ["heavy@heavymp"]
+    assert m["plugins"]["heavy@heavymp"] is True  # plugin still enabled; only its MCP gated
+    assert m["warnings"] == []
+
+
+def test_plugin_without_gate_mcp_not_excluded(buildcfg, config, servers):
+    m = buildcfg.build(config, servers, kit="db", mcp_sel=None, skills_sel=None)
+    assert m["plugin_mcp_exclude"] == []
+
+
 def test_deep_merge_overlay(buildcfg):
     base = {"kits": {"db": {"mcp": ["supabase"]}}, "catalog": {"mcp": {"a": {}}}}
     over = {"kits": {"x": {"mcp": []}}}

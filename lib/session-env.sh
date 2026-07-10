@@ -25,10 +25,22 @@ kog_build_mirror() {
     [[ -e "$e" ]] || continue
     b="$(basename "$e")"
     case "$b" in
-      skills|settings.json|CLAUDE.md|rules) continue ;;
+      skills|settings.json|CLAUDE.md|rules|plugins) continue ;;
       *) ln -s "$e" "$mirror/$b" ;;
     esac
   done
+  # 1b. plugins/: wholesale symlink unless the manifest gates a plugin's bundled
+  #     MCP — plugin .mcp.json bypasses --strict-mcp-config, so gated plugins are
+  #     mirrored per-entry with their .mcp.json dropped (skills/hooks still load).
+  local gated
+  gated="$(jq -r '.plugin_mcp_exclude[]? // empty' "$manifest" 2>/dev/null)"
+  if [[ -d "$rc/plugins" ]]; then
+    if [[ -z "$gated" ]]; then
+      ln -s "$rc/plugins" "$mirror/plugins"
+    else
+      kog_mirror_plugins "$rc/plugins" "$mirror/plugins" "$gated"
+    fi
+  fi
   # ~/.claude.json lives at $HOME — relocate it into the mirror so projects/auth resolve
   [[ -e "$dotjson" ]] && ln -s "$dotjson" "$mirror/.claude.json"
 
@@ -58,6 +70,44 @@ kog_build_mirror() {
   kog_materialize_creds "$mirror"
 
   echo "$mirror"
+}
+
+# Mirror a plugins dir per-entry, dropping .mcp.json from gated marketplaces so
+# a plugin's skills/commands/hooks load but its bundled MCP servers never spawn.
+# Args: $1=real plugins dir  $2=mirror plugins dir  $3=newline-separated plugin
+# ids (name@marketplace) whose marketplace .mcp.json must be excluded.
+kog_mirror_plugins() {
+  local src="$1" dst="$2" gated="$3"
+  mkdir -p "$dst"
+  local e b
+  for e in "$src"/* "$src"/.[!.]*; do
+    [[ -e "$e" ]] || continue
+    b="$(basename "$e")"
+    [[ "$b" == "marketplaces" ]] && continue
+    ln -s "$e" "$dst/$b"
+  done
+  [[ -d "$src/marketplaces" ]] || return 0
+  mkdir -p "$dst/marketplaces"
+  local m mb id hit p pb
+  for m in "$src/marketplaces"/*; do
+    [[ -e "$m" ]] || continue
+    mb="$(basename "$m")"
+    hit=""
+    while IFS= read -r id; do
+      [[ -n "$id" && "${id##*@}" == "$mb" ]] && hit=1
+    done <<< "$gated"
+    if [[ -z "$hit" ]]; then
+      ln -s "$m" "$dst/marketplaces/$mb"
+      continue
+    fi
+    mkdir -p "$dst/marketplaces/$mb"
+    for p in "$m"/* "$m"/.[!.]*; do
+      [[ -e "$p" ]] || continue
+      pb="$(basename "$p")"
+      [[ "$pb" == ".mcp.json" ]] && continue
+      ln -s "$p" "$dst/marketplaces/$mb/$pb"
+    done
+  done
 }
 
 # Materialize auth into the mirror. API-key fast-path skips the keychain entirely.

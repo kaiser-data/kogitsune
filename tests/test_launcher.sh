@@ -42,6 +42,12 @@ printf '{"oauthAccount":{}}\n' > "$TMP/dotjson.json"
 # a rules dir in the fake ~/.claude must NOT be mirrored (auto-load gating)
 mkdir -p "$HC/rules"; printf 'leak-canary\n' > "$HC/rules/canary.md"
 
+# plugin marketplaces: heavymp bundles an MCP server that gate_mcp kits must drop
+mkdir -p "$HC/plugins/marketplaces/heavymp/hooks" "$HC/plugins/marketplaces/othermp"
+printf '{"mcpServers":{"sneaky":{"command":"nope"}}}\n' > "$HC/plugins/marketplaces/heavymp/.mcp.json"
+printf '{"hooks":[]}\n' > "$HC/plugins/marketplaces/heavymp/hooks/hooks.json"
+printf '{}\n' > "$HC/plugins/config.json"
+
 export PATH="$BIN:$PATH"
 export KOGITSUNE_CONFIG="$FIX/kits.yaml"
 export KOGITSUNE_MCP_ON_DEMAND="$FIX/mcp-on-demand.json"
@@ -131,6 +137,22 @@ MIR="$(mirrors | head -1)"
 grep -q "rules/ecc-common/style.md" "$MIR/CLAUDE.md" && grep -q "rules/ecc-common/workflow.md" "$MIR/CLAUDE.md" \
   && ok "selected rules pack imports every pack file" || no "rules imports missing: $(cat "$MIR/CLAUDE.md")"
 [[ ! -e "$MIR/rules" ]] && ok "rules/ still excluded when a pack is selected" || no "rules dir mirrored despite gating"
+clean_tmp
+
+echo "== plugin-MCP gating (gate_mcp drops bundled .mcp.json from the mirror) =="
+KIT_DEBUG=1 "$ROOT/bin/kit" gated >/dev/null 2>&1
+MIR="$(mirrors | head -1)"
+[[ -n "$MIR" && ! -L "$MIR/plugins" ]] && ok "plugins/ mirrored per-entry when gating" || no "plugins/ wholesale symlink despite gating"
+[[ -n "$MIR" && ! -e "$MIR/plugins/marketplaces/heavymp/.mcp.json" ]] && ok "gated plugin's .mcp.json dropped" || no ".mcp.json leaked into mirror"
+[[ -e "$MIR/plugins/marketplaces/heavymp/hooks/hooks.json" ]] && ok "gated plugin's other files still resolve" || no "gated plugin lost its files"
+[[ -L "$MIR/plugins/marketplaces/othermp" ]] && ok "ungated marketplace symlinked wholesale" || no "ungated marketplace not symlinked"
+[[ -e "$MIR/plugins/config.json" ]] && ok "top-level plugins entries preserved" || no "plugins/config.json missing"
+clean_tmp
+
+# no gating -> plugins stays a single wholesale symlink (zero-cost path)
+KIT_DEBUG=1 "$ROOT/bin/kit" db >/dev/null 2>&1
+MIR="$(mirrors | head -1)"
+[[ -n "$MIR" && -L "$MIR/plugins" ]] && ok "plugins/ wholesale symlink when nothing gated" || no "plugins/ not symlinked in ungated kit"
 clean_tmp
 
 echo "== ANTHROPIC_API_KEY fast-path skips creds =="

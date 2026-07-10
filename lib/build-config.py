@@ -135,6 +135,9 @@ def resolve_item(name: str, spec: dict, mcp_servers: dict, warnings: list[str]) 
         entry["kind"] = "mcp"
     elif kind == "plugin":
         entry["plugin"] = spec["plugin"]
+        # gate_mcp: enable the plugin but keep its bundled MCP servers out of the
+        # session (plugin .mcp.json bypasses --strict-mcp-config; the mirror drops it)
+        entry["gate_mcp"] = bool(spec.get("gate_mcp"))
     elif kind == "skill":
         src = os.path.join(skills_root(), spec["skill"])
         entry["src"] = src
@@ -205,23 +208,24 @@ def build(config: dict, mcp_servers: dict, *, kit: str | None,
             warnings.append(f"unknown skill '{n}'{_suggest(n, list(cat_skills))}")
 
     items, plugins, skill_srcs, imports, env = [], {}, [], [], {}
+    plugin_mcp_exclude: list[str] = []
 
     # pinned items always ride along
     pinned_entries = []
     for name, spec in pinned.items():
         e = resolve_item(name, spec, mcp_servers, warnings)
         pinned_entries.append(e)
-        _fold(e, plugins, skill_srcs, imports, env)
+        _fold(e, plugins, skill_srcs, imports, env, plugin_mcp_exclude)
 
     # selected catalog items
     for n in mcp_sel:
         e = resolve_item(n, {"mcp": n, **(cat_mcp.get(n) or {})}, mcp_servers, warnings)
         items.append(e)
-        _fold(e, plugins, skill_srcs, imports, env)
+        _fold(e, plugins, skill_srcs, imports, env, plugin_mcp_exclude)
     for n in skills_sel:
         e = resolve_item(n, cat_skills.get(n) or {}, mcp_servers, warnings)
         items.append(e)
-        _fold(e, plugins, skill_srcs, imports, env)
+        _fold(e, plugins, skill_srcs, imports, env, plugin_mcp_exclude)
 
     # assemble the strict --mcp-config (pinned mcp + selected mcp)
     mcp_config = {"mcpServers": {}}
@@ -239,16 +243,20 @@ def build(config: dict, mcp_servers: dict, *, kit: str | None,
         "skills": skill_srcs,
         "imports": imports,
         "env": env,
+        "plugin_mcp_exclude": plugin_mcp_exclude,
         "mcp_config": mcp_config,
         "weight": weight,
         "warnings": warnings,
     }
 
 
-def _fold(e: dict, plugins: dict, skill_srcs: list, imports: list, env: dict) -> None:
+def _fold(e: dict, plugins: dict, skill_srcs: list, imports: list, env: dict,
+          plugin_mcp_exclude: list) -> None:
     """Accumulate a resolved item into the flat manifest buckets."""
     if e["kind"] == "plugin" and e.get("plugin"):
         plugins[e["plugin"]] = True
+        if e.get("gate_mcp") and e["plugin"] not in plugin_mcp_exclude:
+            plugin_mcp_exclude.append(e["plugin"])
     elif e["kind"] == "skill" and e.get("src"):
         skill_srcs.append(e["src"])
     elif e["kind"] in ("dir", "prefix"):

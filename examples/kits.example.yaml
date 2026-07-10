@@ -18,8 +18,12 @@ catalog:
     kitsune:          { weight: 2000,  tag: "🟡" }   # the lean big sibling
     kitsune-forge:    { weight: 2000,  tag: "🟡" }
     context7:         { weight: 1000,  tag: "🟢" }
+    # a plugin-bundled MCP re-exposed as an explicit opt-in (see gate_mcp below):
+    chrome-devtools:  { weight: 1000,  tag: "🟢", def: { command: "npx", args: ["-y", "chrome-devtools-mcp@latest"] } }
   skills:
-    ecc:              { plugin: "ecc@ecc", weight: 4200, tag: "🟡" }  # full harness (measured; content defers until invoked)
+    # gate_mcp: enable the plugin but drop its bundled .mcp.json from the mirror —
+    # plugin MCP servers bypass --strict-mcp-config and would spawn in every session.
+    ecc:              { plugin: "ecc@ecc", weight: 4200, tag: "🟡", gate_mcp: true }  # full harness (measured; content defers until invoked)
     # rules packs (dirs of *.md under ~/.claude/rules) are gated: the mirror excludes
     # the auto-loaded rules/ dir; picking one imports its files into the session CLAUDE.md.
     ecc-rules-common: { rules: "ecc/common",     weight: 4100, tag: "🟡" }
@@ -43,3 +47,4 @@ kits:
   research: { mcp: [notion, context7], skills: [] }
   ecc:      { mcp: [],                 skills: [ecc, ecc-rules-common] }  # full ECC harness + its core rules
   deep:     { extends: ecc, mcp: ["+context7"] }                 # ECC + docs lookup for heavy builds
+  qa:       { extends: ecc, mcp: ["+chrome-devtools"] }          # ECC + interactive DevTools (traces, heap, console)

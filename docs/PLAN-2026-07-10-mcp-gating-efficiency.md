@@ -1,6 +1,9 @@
 # Plan — plugin-MCP gating + gateway-first efficiency (2026-07-10)
 
-Status: **proposed** (not yet implemented). Author: maintainer session 2026-07-10.
+Status: **Phase 1 implemented 2026-07-11** (gate_mcp + qa kit, tests green; the mirror
+drops the gated marketplace's `.mcp.json` entirely rather than materializing `{}`).
+Phase 2 partially done: kitsune-gateway skill shipped to marty-skills.
+Author: maintainer session 2026-07-10.
 Companion to `HANDOFF-2026-07-09-ecc-superclaude.md` (all seven duties there are done;
 this plan is the follow-up work discovered afterwards).
 
