@@ -15,7 +15,7 @@ catalog:
     n8n-mcp:          { weight: 12000, tag: "🔴" }
     notion:           { weight: 4000,  tag: "🟠" }
     dify-superclaude: { weight: 3000,  tag: "🟠" }
-    kitsune:          { weight: 2000,  tag: "🟡" }   # the lean big sibling
+    kitsune:          { weight: 700,   tag: "🟢" }   # the lean big sibling (measured Δ 2026-07-11: ~590-780)
     kitsune-forge:    { weight: 2000,  tag: "🟡" }
     context7:         { weight: 1000,  tag: "🟢" }
     # a plugin-bundled MCP re-exposed as an explicit opt-in (see gate_mcp below):
@@ -39,12 +39,14 @@ catalog:
 # inherited via `extends`, overridable live in the picker (ctrl-o), and always beaten
 # by an explicit `kit <name> -- --model <x>`. Omit it to use Claude Code's default.
 kits:
-  lean:     { mcp: [],                 skills: [] }
+  # kitsune rides in lean + ecc (deep/qa inherit): a small always-on gateway buys
+  # on-demand access to any registry MCP (search → shapeshift → call)
+  lean:     { mcp: [kitsune],          skills: [] }
   db:       { model: opus, mcp: [supabase], skills: [postgres-bp] }
   db-heavy: { extends: db, mcp: ["+context7"] }      # inherit db (incl. model: opus), add a server
   n8n:      { mcp: [n8n-mcp],          skills: [n8n] }
   frontend: { model: sonnet, mcp: [], skills: [frontend-design] }
   research: { mcp: [notion, context7], skills: [] }
-  ecc:      { mcp: [],                 skills: [ecc, ecc-rules-common] }  # full ECC harness + its core rules
+  ecc:      { mcp: [kitsune],          skills: [ecc, ecc-rules-common] }  # full ECC harness + its core rules
   deep:     { extends: ecc, mcp: ["+context7"] }                 # ECC + docs lookup for heavy builds
   qa:       { extends: ecc, mcp: ["+chrome-devtools"] }          # ECC + interactive DevTools (traces, heap, console)
