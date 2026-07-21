@@ -32,6 +32,14 @@ catalog:
     postgres-bp:      { plugin: "postgres-best-practices@supabase-agent-skills", weight: 2000, tag: "🟡" }
     n8n:              { dir: "~/.claude/skills/n8n-*", count: 7, weight: 4000, tag: "🟡" }
     frontend-design:  { plugin: "frontend-design@claude-plugins-official", weight: 1000, tag: "🟢" }
+    # --- process layer: superpowers (obra/superpowers) — the HOW of working.
+    # Complements ECC (the WHAT): superpowers choreographs plan→TDD→review→verify→finish;
+    # ECC supplies the domain steps. Precedence on overlap: guardrails > superpowers > ECC.
+    # Two install modes (see `make superpowers*` / lib/install-superpowers.sh):
+    #   Mode A — plugin (has a SessionStart hook that auto-injects the dispatcher every session):
+    superpowers:      { plugin: "superpowers@superpowers-dev", weight: 3000, tag: "🟡" }
+    #   Mode B — à la carte skills dir (same skills, no hook, trigger on demand):
+    sp:               { dir: "~/.claude/_vendor/superpowers/skills/*", weight: 1500, tag: "🟢" }
 
 # Named kits shown in the picker and launchable directly via `kit <name>`.
 # Kits compose: `extends:` inherits another kit; "+name"/"-name" add or remove items.
@@ -50,3 +58,9 @@ kits:
   ecc:      { mcp: [kitsune],          skills: [ecc, ecc-rules-common] }  # full ECC harness + its core rules
   deep:     { extends: ecc, mcp: ["+context7"] }                 # ECC + docs lookup for heavy builds
   qa:       { extends: ecc, mcp: ["+chrome-devtools"] }          # ECC + interactive DevTools (traces, heap, console)
+
+  # --- best-of-both: superpowers process layer × ECC capability layer ---
+  # `kit for "<task>"` picks among these from learned experience; see the README.
+  flow:     { mcp: [kitsune], skills: [sp] }                     # lean process discipline (à la carte, no hook), no ECC
+  build:    { extends: ecc, model: opus, skills: ["+superpowers"] }  # ⭐ full ECC harness + superpowers methodology (plugin+hook)
+  feature:  { model: opus, mcp: [kitsune], skills: [sp, ecc-rules-ts] }  # focused: process + one language's rules, no full ECC
