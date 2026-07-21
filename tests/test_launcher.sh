@@ -303,6 +303,35 @@ COMP_WORDS=(kit db --); COMP_CWORD=2
 _kit 2>/dev/null
 printf '%s\n' "${COMPREPLY[@]:-}" | grep -qx -- "--strict" && ok "bash completion offers launch flags" || no "completion missing --strict"
 
+echo "== kit for: haiku-backed task→kit selector =="
+# stub claude to emit the `-p --output-format=json` envelope with a canned kit choice
+cat > "$BIN/claude" <<'EOF'
+#!/usr/bin/env bash
+echo '{"result":"{\"kit\":\"db\",\"why\":\"database query work\"}"}'
+EOF
+chmod +x "$BIN/claude"
+out="$("$ROOT/bin/kit" for "optimize a slow SQL query" 2>&1)"
+echo "$out" | grep -q "for: db" && ok "kit for picks a kit from the model" || no "for pick: $out"
+echo "$out" | grep -q 'kit db -- "optimize a slow SQL query"' && ok "kit for prints the launch command" || no "for cmd: $out"
+# an invalid pick (not a real kit name) is rejected, never blindly launched
+cat > "$BIN/claude" <<'EOF'
+#!/usr/bin/env bash
+echo '{"result":"{\"kit\":\"nonsense\",\"why\":\"x\"}"}'
+EOF
+chmod +x "$BIN/claude"
+out="$("$ROOT/bin/kit" for "whatever" 2>&1)"; rc=$?
+{ [[ "$rc" -ne 0 ]] && echo "$out" | grep -q "no confident pick"; } && ok "kit for rejects an unknown kit name" || no "for reject: $out ($rc)"
+# --go launches the chosen kit (dry-run shows the resolved launch, no real claude call)
+cat > "$BIN/claude" <<'EOF'
+#!/usr/bin/env bash
+echo '{"result":"{\"kit\":\"db\",\"why\":\"db\"}"}'
+EOF
+chmod +x "$BIN/claude"
+out="$(KIT_DRY_RUN=1 "$ROOT/bin/kit" for --go "tune indexes" 2>&1)"
+echo "$out" | grep -q "kit=db" && ok "kit for --go launches the pick" || no "for --go: $out"
+make_claude 0
+clean_tmp
+
 echo "== kog_cleanup path safety =="
 # shellcheck source=lib/session-env.sh
 source "$ROOT/lib/session-env.sh"

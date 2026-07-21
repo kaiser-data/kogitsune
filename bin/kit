@@ -8,6 +8,7 @@
 #   kit <name> --dry-run resolve + show the plan, launch nothing
 #   kit <name> -- ARGS   forward ARGS to `claude` (e.g. kit db -- --model opus "fix X")
 #   kit ls               list kits + à la carte catalog
+#   kit for "<task>"     ask haiku which kit fits a task (add --go to launch it)
 #   kit show <name>      show what a kit packs (no launch)
 #   kit save <name> --mcp a,b --skills x,y [--model m]  save a selection as a named kit
 #   kit rm <name>        remove a saved kit
@@ -507,12 +508,69 @@ cmd_picker() {  # $1 = optional base kit to seed the pack with
   launch_from_manifest "$manifest"
 }
 
+# ---- task -> kit selector (haiku one-shot) ---------------------------------
+# `kit for "<task>"` — a cheap classifier: hand haiku the task + the resolved kit
+# catalog and let it pick the leanest kit that fits. Prints the pick + the launch
+# command; with --go it launches immediately (the task is forwarded as the prompt).
+cmd_for() {
+  need python3; need jq; need claude
+  local go=""
+  if [[ "${1:-}" == "--go" || "${1:-}" == "-y" ]]; then go=1; shift; fi
+  local task="$*"
+  [[ -n "$task" ]] || die "usage: kit for [--go] \"<task description>\""
+  # compact the resolved catalog: kit names + contents + weight, plus à la carte item names.
+  local list catalog
+  list="$(bc --list)" || die "could not read kit catalog"
+  catalog="$(printf '%s' "$list" | jq -c '{
+      kits: (.kit_info | to_entries | map({name:.key, model:.value.model,
+              mcp:.value.mcp, skills:.value.skills, weight:.value.weight})),
+      skills: (.skills|keys), mcp: (.mcp|keys) }')"
+  local prompt
+  prompt="$(cat <<EOF
+You are kogitsune's kit selector. Choose the single best kit to launch for the task below.
+Rules: prefer the LEANEST kit that covers the task; only pick a heavy kit (ecc/build/deep/qa)
+when it genuinely needs a full harness or language reviewers. 'lean' = trivial edits/questions.
+'flow' = lightweight process discipline (plan/TDD/debug), no heavy harness. 'build' = full ECC
+capability + superpowers methodology. 'feature' = process + one language's rules. Pinned items
+(memory, guardrails, graphify) always load — ignore them.
+
+TASK: $task
+
+AVAILABLE KITS AND ITEMS (JSON):
+$catalog
+
+Reply with ONLY a compact JSON object, no prose, no code fence:
+{"kit":"<one kit name from the list>","why":"<one short sentence>"}
+EOF
+)"
+  local raw obj kit why
+  raw="$(claude -p --model haiku --output-format=json "$prompt" 2>/dev/null \
+         | jq -r '.result // empty' 2>/dev/null)" || true
+  obj="$(printf '%s' "$raw" | tr -d '\n' | grep -o '{.*}' | head -1)"
+  kit="$(printf '%s' "$obj" | jq -r '.kit // empty' 2>/dev/null)"
+  why="$(printf '%s' "$obj" | jq -r '.why // empty' 2>/dev/null)"
+  # validate the pick against real kit names; fall back gracefully if the model wandered
+  local known; known="$(printf '%s' "$list" | jq -r '.kits|keys[]')"
+  if [[ -z "$kit" ]] || ! grep -qxF "$kit" <<<"$known"; then
+    echo "kit: no confident pick from the selector — choose manually (kit ls)." >&2
+    [[ -n "$raw" ]] && echo "     model said: $raw" >&2
+    return 1
+  fi
+  echo "🦊 for: $kit${why:+  — $why}" >&2
+  if [[ -n "$go" ]]; then
+    cmd_launch "$kit" "$task"
+  else
+    echo "     run: kit $kit -- \"$task\"" >&2
+  fi
+}
+
 main() {
   local cmd="${1:-}"
   case "$cmd" in
     "")                    cmd_picker ;;
     pick|picker|tune)      shift; cmd_picker "$@" ;;
     ls|list)               cmd_ls ;;
+    for)                   shift; cmd_for "$@" ;;
     show)                  shift; cmd_show "$@" ;;
     save)                  shift; cmd_save "$@" ;;
     rm|remove)             shift; cmd_rm "$@" ;;
@@ -520,7 +578,7 @@ main() {
     doctor)                cmd_doctor ;;
     help|-h|--help)        awk 'NR>1 && /^#/{sub(/^# ?/,"");print;next} NR>1{exit}' "$0" ;;
     __kits)                bc --list 2>/dev/null | jq -r '.kits|keys[]' 2>/dev/null ;;
-    __commands)            printf '%s\n' ls show save rm measure tune doctor help ;;
+    __commands)            printf '%s\n' ls for show save rm measure tune doctor help ;;
     __tune_rows)           shift; cmd_tune_rows "$@" ;;
     __tune_toggle)         shift; cmd_tune_toggle "$@" ;;
     __tune_presets)        shift; cmd_tune_presets "$@" ;;

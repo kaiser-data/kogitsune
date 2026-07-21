@@ -217,6 +217,60 @@ Two gating features close context leaks the harness would otherwise open:
   so its skills/commands/hooks load but its MCP servers never spawn. Re-expose the server as
   an inline-def `mcp` catalog item in the kits that genuinely want it.
 
+## Two layers: process (superpowers) × capability (ECC)
+
+Two big harnesses plug into kogitsune, and they answer different questions — so you pack them as
+*layers*, not alternatives:
+
+- **superpowers** (`obra/superpowers`) — the **HOW**. ~14 methodology skills that choreograph a task:
+  `brainstorming` → `writing-plans` → `using-git-worktrees` → `test-driven-development` →
+  `requesting-code-review` → `verification-before-completion` → `finishing-a-development-branch`.
+- **ECC** (`ecc@ecc`) — the **WHAT**. 278 skills / 94 commands / 67 agents of domain capability:
+  language reviewers, build-resolvers, framework patterns, orchestration (`orch-*`).
+- **guardrails** (pinned) — the non-negotiable floor beneath both.
+
+**Precedence on overlap** (both ship TDD/review/planning): `guardrails > superpowers (owns the
+*sequence*) > ECC (owns the *domain step*)`. Because skills defer until invoked, the cost of
+combining them is at invocation, not at launch.
+
+One wrinkle drives the design: **superpowers installs a SessionStart hook** that auto-injects its
+dispatcher on every session where the plugin is enabled — a standing cost, unlike ECC's
+defer-until-invoked skills. So kogitsune offers two integration modes:
+
+| Mode | Catalog entry | Cost | Used by |
+|---|---|---|---|
+| **A — plugin** | `superpowers: { plugin: "superpowers@superpowers-dev" }` | full methodology **+ SessionStart hook** | `build` |
+| **B — à la carte** | `sp: { dir: "~/.claude/_vendor/superpowers/skills/*" }` | same skills, **no hook**, trigger on demand | `flow`, `feature` |
+
+Install one or both:
+
+```bash
+make superpowers          # both modes
+make superpowers-plugin   # Mode A: marketplace add + plugin install (has the hook)
+make superpowers-skills   # Mode B: git clone into ~/.claude/_vendor (à la carte, no hook)
+```
+
+The best-of-both kits:
+
+```yaml
+flow:    { mcp: [kitsune], skills: [sp] }                    # lean process discipline, no ECC
+build:   { extends: ecc, model: opus, skills: ["+superpowers"] }  # ⭐ ECC capability + methodology
+feature: { model: opus, mcp: [kitsune], skills: [sp, ecc-rules-ts] }  # process + one language
+```
+
+### From a task to a kit: `kit for`
+
+Don't remember the matrix — let the fox pick. `kit for "<task>"` hands a haiku one-shot your task
+plus the resolved catalog and prints the leanest kit that fits (add `--go` to launch it):
+
+```bash
+$ kit for "add JWT refresh to the python auth service, TDD"
+🦊 for: build  — multi-step python feature needing methodology + language reviewers
+     run: kit build -- "add JWT refresh to the python auth service, TDD"
+
+$ kit for --go "what does resolve_kit do?"      # trivial → lean, launched immediately
+```
+
 ## Status
 
 🦊 **Working MVP core.** Resolver + manifest, pack-weight estimator, curated-mirror launcher,
