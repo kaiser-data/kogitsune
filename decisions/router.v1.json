@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "built_from": {
+    "decisions": 3
+  },
+  "rules": [
+    {
+      "kit": "build",
+      "signals_any": [
+        "auth/security-sensitive",
+        "explicit tests -> TDD",
+        "multi-file feature",
+        "python"
+      ],
+      "support": 1
+    },
+    {
+      "kit": "custom",
+      "signals_any": [
+        "OAuth-only (no ANTHROPIC_API_KEY)",
+        "harness startup tax ~600s measured",
+        "latency-vs-accuracy tradeoff",
+        "selection is a repeated task"
+      ],
+      "support": 1
+    },
+    {
+      "kit": "lean",
+      "signals_any": [
+        "docs-only",
+        "no code logic",
+        "single-file",
+        "trivial edit"
+      ],
+      "support": 1
+    }
+  ]
+}
