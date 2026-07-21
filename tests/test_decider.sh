@@ -101,5 +101,28 @@ else
   ok "no-overlap task exits non-zero (cold path)"
 fi
 
+echo "== decider: confidence outweighs raw support =="
+# Two hesitant picks must not outvote one confident one — otherwise a stream of
+# low-confidence `kit for` logs would slowly bury the opus gold labels.
+DW="$(newdir)"
+KOG_DECIDER_DIR="$DW" "$DECIDER" append-decision \
+  '{"task":"a","decision":{"kit":"flow"},"signals":["docs-only"],"confidence":0.3}' >/dev/null 2>&1
+KOG_DECIDER_DIR="$DW" "$DECIDER" append-decision \
+  '{"task":"b","decision":{"kit":"flow"},"signals":["docs-only"],"confidence":0.3}' >/dev/null 2>&1
+KOG_DECIDER_DIR="$DW" "$DECIDER" append-decision \
+  '{"task":"c","decision":{"kit":"lean"},"signals":["docs-only"],"confidence":0.95}' >/dev/null 2>&1
+rw="$(KOG_DECIDER_DIR="$DW" "$DECIDER" distill 2>/dev/null)"
+if command -v jq >/dev/null 2>&1; then
+  fw="$(jq -r '.rules[] | select(.kit=="flow") | .weight' "$rw" 2>/dev/null)"
+  fs="$(jq -r '.rules[] | select(.kit=="flow") | .support' "$rw" 2>/dev/null)"
+  [[ "$fs" == "2" && "$fw" == "0.6" ]] \
+    && ok "rule carries both support (count) and weight (summed confidence)" \
+    || no "rule carries both support and weight" "support=$fs weight=$fw"
+fi
+m="$(KOG_DECIDER_DIR="$DW" "$DECIDER" match 'update the readme docs' 2>/dev/null)"
+[[ "$m" == "lean" ]] \
+  && ok "one confident decision beats two hesitant ones" \
+  || no "one confident decision beats two hesitant ones" "got: '$m'"
+
 echo; echo "decider tests: $pass passed, $fail failed"
 [[ "$fail" == 0 ]]

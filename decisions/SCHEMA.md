@@ -66,3 +66,19 @@ is what keeps *latest* from reading as a testing signal).
 **Not every decision becomes a rule.** Records whose `decision.kit` is `custom`, or whose
 `launch` starts with `n/a`, are skipped: the router's output is a kit name to launch, and a
 bespoke composition or an architecture call can't be replayed by name.
+
+## Support vs. weight
+
+Each rule carries both:
+
+| Field | Meaning |
+|-------|---------|
+| `support` | how many decisions produced this rule (count) |
+| `weight`  | those decisions' summed `confidence` |
+
+`match` ranks by signal overlap first, then **weight**, then support. Counting alone would let
+volume win: `kit for` logs every cold-path pick at `confidence: 0.6`, so a handful of hesitant
+automated picks would eventually outrank a hand-made 0.97 label. An absent or non-numeric
+`confidence` is read as `0.5` — unstated is middling, never certain.
+
+This is why `confidence` is worth setting honestly. It is not decoration; it is the vote.

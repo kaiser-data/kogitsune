@@ -1,0 +1,31 @@
+{
+  "version": 3,
+  "built_from": {
+    "decisions": 2
+  },
+  "rules": [
+    {
+      "kit": "lean",
+      "signals_any": [
+        "docs",
+        "single-file",
+        "trivial"
+      ],
+      "support": 1,
+      "weight": 0.97
+    },
+    {
+      "kit": "build",
+      "signals_any": [
+        "auth",
+        "feature",
+        "multi-file",
+        "python",
+        "security",
+        "testing"
+      ],
+      "support": 1,
+      "weight": 0.9
+    }
+  ]
+}

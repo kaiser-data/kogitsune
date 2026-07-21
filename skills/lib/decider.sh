@@ -133,7 +133,7 @@ cmd_normalize(){ normalize_text "${1:-}"; }
 cmd_distill(){
   need_jq
   [[ -s "$DEC" ]] || die "no decisions to distill"
-  local v out tmp kit launch raw
+  local v out tmp kit launch raw conf
   v="$(( $(highest_version router) + 1 ))"; out="$(kind_path router "$v")"
   tmp="$(mktemp "${TMPDIR:-/tmp}/decider.distill.XXXXXX")"
   # Canonicalize each decision's signals first, so rules key on the shared
@@ -147,8 +147,11 @@ cmd_distill(){
     [[ -n "$kit" && "$kit" != "custom" ]] || continue
     case "$launch" in n/a*) continue ;; esac
     raw="$(printf '%s' "$line" | jq -r '[.signals[]?] | join(" ")')"
-    jq -n -c --arg kit "$kit" --argjson sig "$(tokens_json "$raw")" \
-      '{kit:$kit, signals:$sig}' >> "$tmp"
+    # an unstated or malformed confidence is treated as middling, never as certain
+    conf="$(printf '%s' "$line" \
+      | jq -r 'if (.confidence|type) == "number" then .confidence else 0.5 end')"
+    jq -n -c --arg kit "$kit" --argjson sig "$(tokens_json "$raw")" --argjson conf "$conf" \
+      '{kit:$kit, signals:$sig, confidence:$conf}' >> "$tmp"
   done < "$DEC"
   jq -s --argjson v "$v" '
     { version: $v,
@@ -156,9 +159,10 @@ cmd_distill(){
       rules: ( group_by(.kit)
         | map({ kit: .[0].kit,
                 signals_any: ([ .[].signals[]? ] | unique),
-                support: length })
+                support: length,
+                weight: ([ .[].confidence ] | add | . * 1000 | round / 1000) })
         | map(select(.signals_any | length > 0))
-        | sort_by(-.support) )
+        | sort_by([-.weight, -.support]) )
     }' "$tmp" > "$out"
   rm -f "$tmp"
   echo "$out"
@@ -172,14 +176,16 @@ cmd_match(){ # task -> best kit from the latest router; exit 1 when nothing over
   [[ -n "$router" && -f "$router" ]] || return 1
   toks="$(tokens_json "$task")"
   [[ "$toks" != "[]" ]] || return 1
-  # Most overlapping signals wins; ties break on support, then kit name so the
-  # same task always routes the same way.
+  # Most overlapping signals wins. Ties break on weight (summed confidence) rather
+  # than raw count, so a stream of hesitant picks can't bury a confident one; then
+  # on support, then kit name so the same task always routes the same way.
+  # `.weight // .support` keeps pre-v3 routers, which had no weight, readable.
   kit="$(jq -r --argjson t "$toks" '
     [ .rules[]
-      | { kit, support,
+      | { kit, support, weight: (.weight // .support // 0),
           overlap: ([ .signals_any[] | select(. as $s | $t | index($s)) ] | length) }
       | select(.overlap > 0) ]
-    | sort_by([-.overlap, -.support, .kit])
+    | sort_by([-.overlap, -.weight, -.support, .kit])
     | (.[0].kit // empty)' "$router")"
   [[ -n "$kit" ]] || return 1
   echo "$kit"
