@@ -260,16 +260,37 @@ feature: { model: opus, mcp: [kitsune], skills: [sp, ecc-rules-ts] }  # process 
 
 ### From a task to a kit: `kit for`
 
-Don't remember the matrix — let the fox pick. `kit for "<task>"` hands a haiku one-shot your task
-plus the resolved catalog and prints the leanest kit that fits (add `--go` to launch it):
+Don't remember the matrix — let the fox pick. `kit for "<task>"` prints the leanest kit that
+fits (add `--go` to launch it), and it answers from **learned experience first**:
 
 ```bash
 $ kit for "add JWT refresh to the python auth service, TDD"
-🦊 for: build  — multi-step python feature needing methodology + language reviewers
+🦊 for: build  — learned router (no model call)
      run: kit build -- "add JWT refresh to the python auth service, TDD"
 
 $ kit for --go "what does resolve_kit do?"      # trivial → lean, launched immediately
 ```
+
+Two paths, and the cheap one is the default:
+
+- **Hot path** — the task's canonical signals overlap a rule the router already learned, so
+  the pick is a local lookup: no model, no harness startup. Instant.
+- **Cold path** — nothing overlaps, so a haiku one-shot gets the task plus the resolved
+  catalog. The pick is then **logged as a gold label** with normalized signals, so the same
+  shape lands on the hot path next time. (Hot-path picks are deliberately *not* logged —
+  re-recording what the router already knew would only inflate its own support counts.)
+
+That loop is the point: model calls get **rarer**, not just cheaper.
+
+```bash
+skills/lib/decider.sh normalize "harden the login flow"   # → auth, security
+skills/lib/decider.sh match     "harden the login flow"   # → build   (exit 1 = cold)
+skills/lib/decider.sh distill                             # decisions.jsonl → router.v<N+1>
+```
+
+Signals are canonicalized before they reach a rule, so `"auth/security-sensitive"` and
+`"needs a login audit"` reinforce the *same* rule instead of two unrelated ones — see
+[`decisions/SCHEMA.md`](decisions/SCHEMA.md) for the vocabulary.
 
 ## Status
 

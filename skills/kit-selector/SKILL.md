@@ -1,6 +1,6 @@
 ---
 name: kit-selector
-version: 0.1.0
+version: 0.2.0
 description: Use when a task needs a kogitsune config/kit chosen before launch, when routing work to the leanest capable harness, or when deciding which model + MCP + skills a task warrants. Symptoms: "which kit for this?", unsure lean vs build, avoiding a full-harness model call for an obvious task.
 ---
 
@@ -20,18 +20,36 @@ Selects *for* `kit-builder`.
 
 ## How it works
 1. Load inputs: `decider latest context` (menu) and `decider latest router` (learned rules).
-2. **Hot path** — extract task signals (language, security surface, tests, triviality,
-   domain). If they match a router rule with support, take that kit. No model call.
-3. **Cold path** — no confident match: reason over the context to compose the config
-   (kit *or* à-la-carte model+MCP+skills). This is the teacher step (opus-grade judgment).
+2. **Hot path** — `decider match "<task>"` prints the best kit and exits 0. It normalizes
+   the task to canonical signals and takes the rule with the most overlap (ties break on
+   support, then kit name, so the same task always routes the same way). No model call.
+3. **Cold path** — `match` exits 1: nothing overlapped. Reason over the context to compose
+   the config (kit *or* à-la-carte model+MCP+skills). This is the teacher step.
 4. Log it: `decider append-decision '<json>'` with `task`, `decision`, **`signals`**,
    `rationale`, `confidence`, `alternatives` (see `decisions/SCHEMA.md`).
 5. Periodically `decider distill` → bumps `router.v<N+1>.json` from all decisions.
+
+## Canonical signals
+The router can only aggregate what it can compare, so `distill` folds every signal onto a
+fixed vocabulary (`decider normalize "<text>"` shows it for any text):
+
+`auth` · `security` · `testing` · `docs` · `performance` · `refactor` · `bugfix` ·
+`feature` · `multi-file` · `single-file` · `trivial` · `python` · `typescript` · `go` ·
+`rust` · `shell`
+
+Write signals however reads clearly — `"auth/security-sensitive"` folds to `auth`+`security`,
+`"explicit tests -> TDD"` to `testing`. You are *describing*, not matching; normalization is
+what makes two differently-worded decisions reinforce the same rule. Decisions that never
+name a launchable kit (`custom`, or `launch: "n/a…"`) are excluded from the router.
 
 ## Improve with experience
 `signals → decision` pairs accumulate in `decisions.jsonl`; `distill` compiles them into
 the next router version. More logged decisions ⇒ more tasks answered on the hot path ⇒
 fewer model calls. `alternatives` supply contrastive negatives for future learning.
+
+`kit for "<task>"` runs this same loop from the shell: router first, haiku only on a miss,
+and it logs **cold-path picks only** — recording what the router already knew would just
+inflate that rule's own support count.
 
 ## Versioning
 - Skill: frontmatter `version:`.

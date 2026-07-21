@@ -37,3 +37,32 @@ Tiers the log is meant to bootstrap:
 
 `signals` + `decision` are the (X → y) pairs a future classifier/skill learns from;
 `alternatives` supply contrastive negatives.
+
+## Signal normalization
+
+Signals are written as free text, but `distill` folds them onto a fixed vocabulary before
+they reach a router rule — two decisions that said `"auth/security-sensitive"` and
+`"needs a login audit"` must reinforce the *same* rule, not two unrelated ones.
+
+| Token | folds from (examples) |
+|-------|----------------------|
+| `auth` | auth, authentication, jwt, oauth, login, credential, password |
+| `security` | security, secure, vulnerability, crypto, secret, injection, xss, csrf |
+| `testing` | test, tests, TDD, coverage |
+| `docs` | doc, docs, documentation, readme, changelog, comment |
+| `performance` | perf, latency, optimize, throughput, bottleneck, profiling, slow |
+| `refactor` | refactor, cleanup, rename, restructure, dead code, simplify |
+| `bugfix` | bug, fix, defect, broken, crash, regression |
+| `feature` | feature, implement, add support, new endpoint |
+| `multi-file` / `single-file` | multi-file, cross-file, project-wide / single file, one file |
+| `trivial` | trivial, typo, tiny, one-liner, minor, nit |
+| `python` `typescript` `go` `rust` `shell` | language + framework names (django, react, cargo, …) |
+
+Inspect the folding for any text with `decider normalize "<text>"`. Extend the vocabulary in
+`SIGNAL_VOCAB` (`skills/lib/decider.sh`) — patterns are plain substrings against lowercased,
+punctuation-stripped, space-padded text; wrap one in spaces for a whole-word match (`" test"`
+is what keeps *latest* from reading as a testing signal).
+
+**Not every decision becomes a rule.** Records whose `decision.kit` is `custom`, or whose
+`launch` starts with `n/a`, are skipped: the router's output is a kit name to launch, and a
+bespoke composition or an architecture call can't be replayed by name.

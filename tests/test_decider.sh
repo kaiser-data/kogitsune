@@ -41,5 +41,65 @@ echo "== decider: stats =="
 st="$(KOG_DECIDER_DIR="$D" "$DECIDER" stats 2>/dev/null)"
 case "$st" in *"decisions:"*) ok "stats reports decisions";; *) no "stats reports decisions" "$st";; esac
 
+echo "== decider: normalize -> canonical signal vocabulary =="
+norm(){ KOG_DECIDER_DIR="$D" "$DECIDER" normalize "$1" 2>/dev/null | tr '\n' ' '; }
+has(){ case " $1 " in *" $2 "*) return 0;; *) return 1;; esac; }
+
+n="$(norm 'auth/security-sensitive')"
+{ has "$n" auth && has "$n" security; } \
+  && ok "verbose phrase splits into canonical tokens" \
+  || no "verbose phrase splits into canonical tokens" "got: '$n'"
+
+n="$(norm 'explicit tests -> TDD')"
+has "$n" testing && ok "'tests'/'TDD' collapse to one 'testing' token" \
+  || no "'tests'/'TDD' collapse to one 'testing' token" "got: '$n'"
+
+n="$(norm 'PYTHON')"
+has "$n" python && ok "normalize is case-insensitive" || no "normalize is case-insensitive" "got: '$n'"
+
+n="$(norm 'fix a typo in the README')"
+{ has "$n" trivial && has "$n" docs; } \
+  && ok "raw task text normalizes to signals" \
+  || no "raw task text normalizes to signals" "got: '$n'"
+
+n="$(norm 'the latest router version')"
+has "$n" testing && no "no false 'testing' from the substring in 'latest'" "got: '$n'" \
+  || ok "no false 'testing' from the substring in 'latest'"
+
+n="$(norm 'zzzz qqqq')"
+[[ -z "${n// /}" ]] && ok "unknown text yields no tokens" || no "unknown text yields no tokens" "got: '$n'"
+
+echo "== decider: distill stores canonical signals =="
+DN="$(newdir)"
+KOG_DECIDER_DIR="$DN" "$DECIDER" append-decision \
+  '{"task":"jwt refresh for the python auth service","decision":{"kit":"build"},"signals":["python","auth/security-sensitive","explicit tests -> TDD"]}' >/dev/null 2>&1
+KOG_DECIDER_DIR="$DN" "$DECIDER" append-decision \
+  '{"task":"fix a typo in the README","decision":{"kit":"lean"},"signals":["trivial edit","docs-only","single-file"]}' >/dev/null 2>&1
+rn="$(KOG_DECIDER_DIR="$DN" "$DECIDER" distill 2>/dev/null)"
+if command -v jq >/dev/null 2>&1; then
+  sig="$(jq -r '.rules[] | select(.kit=="build") | .signals_any | join(" ")' "$rn" 2>/dev/null)"
+  { has "$sig" auth && has "$sig" testing; } \
+    && ok "router rule holds canonical tokens, not raw phrases" \
+    || no "router rule holds canonical tokens, not raw phrases" "got: '$sig'"
+  has "$sig" "auth/security-sensitive" \
+    && no "raw verbose phrase is gone from the router" "still present: '$sig'" \
+    || ok "raw verbose phrase is gone from the router"
+fi
+
+echo "== decider: match -> deterministic hot path =="
+m="$(KOG_DECIDER_DIR="$DN" "$DECIDER" match 'add JWT refresh tokens to our Python auth service with tests' 2>/dev/null)"
+[[ "$m" == "build" ]] && ok "unseen auth+python+tests task routes to build" \
+  || no "unseen auth+python+tests task routes to build" "got: '$m'"
+
+m="$(KOG_DECIDER_DIR="$DN" "$DECIDER" match 'correct a typo in the docs' 2>/dev/null)"
+[[ "$m" == "lean" ]] && ok "unseen docs typo task routes to lean" \
+  || no "unseen docs typo task routes to lean" "got: '$m'"
+
+if KOG_DECIDER_DIR="$DN" "$DECIDER" match 'zzzz qqqq' >/dev/null 2>&1; then
+  no "no-overlap task exits non-zero (cold path)" "exit 0 on unmatchable task"
+else
+  ok "no-overlap task exits non-zero (cold path)"
+fi
+
 echo; echo "decider tests: $pass passed, $fail failed"
 [[ "$fail" == 0 ]]

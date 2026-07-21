@@ -310,7 +310,7 @@ cat > "$BIN/claude" <<'EOF'
 echo '{"result":"{\"kit\":\"db\",\"why\":\"database query work\"}"}'
 EOF
 chmod +x "$BIN/claude"
-out="$("$ROOT/bin/kit" for "optimize a slow SQL query" 2>&1)"
+out="$(KOG_DECIDER_DIR="$TMP/dec-pick" "$ROOT/bin/kit" for "optimize a slow SQL query" 2>&1)"
 echo "$out" | grep -q "for: db" && ok "kit for picks a kit from the model" || no "for pick: $out"
 echo "$out" | grep -q 'kit db -- "optimize a slow SQL query"' && ok "kit for prints the launch command" || no "for cmd: $out"
 # an invalid pick (not a real kit name) is rejected, never blindly launched
@@ -319,7 +319,7 @@ cat > "$BIN/claude" <<'EOF'
 echo '{"result":"{\"kit\":\"nonsense\",\"why\":\"x\"}"}'
 EOF
 chmod +x "$BIN/claude"
-out="$("$ROOT/bin/kit" for "whatever" 2>&1)"; rc=$?
+out="$(KOG_DECIDER_DIR="$TMP/dec-bad" "$ROOT/bin/kit" for "whatever" 2>&1)"; rc=$?
 { [[ "$rc" -ne 0 ]] && echo "$out" | grep -q "no confident pick"; } && ok "kit for rejects an unknown kit name" || no "for reject: $out ($rc)"
 # --go launches the chosen kit (dry-run shows the resolved launch, no real claude call)
 cat > "$BIN/claude" <<'EOF'
@@ -327,8 +327,48 @@ cat > "$BIN/claude" <<'EOF'
 echo '{"result":"{\"kit\":\"db\",\"why\":\"db\"}"}'
 EOF
 chmod +x "$BIN/claude"
-out="$(KIT_DRY_RUN=1 "$ROOT/bin/kit" for --go "tune indexes" 2>&1)"
+out="$(KIT_DRY_RUN=1 KOG_DECIDER_DIR="$TMP/dec-go" "$ROOT/bin/kit" for --go "tune indexes" 2>&1)"
 echo "$out" | grep -q "kit=db" && ok "kit for --go launches the pick" || no "for --go: $out"
+
+echo "== kit for: learned router hot path =="
+# a router that already knows this shape answers with no model call at all — the
+# stub below hard-fails, so any model call would surface as a failed pick.
+DEC="$TMP/dec"; mkdir -p "$DEC"
+cat > "$DEC/router.v1.json" <<'EOF'
+{"version":1,"built_from":{"decisions":1},
+ "rules":[{"kit":"db","signals_any":["performance"],"support":3}]}
+EOF
+cat > "$BIN/claude" <<'EOF'
+#!/usr/bin/env bash
+echo "MODEL WAS CALLED" >&2; exit 1
+EOF
+chmod +x "$BIN/claude"
+out="$(KOG_DECIDER_DIR="$DEC" "$ROOT/bin/kit" for "optimize a slow query" 2>&1)"
+{ echo "$out" | grep -q "for: db" && ! echo "$out" | grep -q "MODEL WAS CALLED"; } \
+  && ok "router answers a known task with zero model calls" || no "hot path: $out"
+[[ ! -s "$DEC/decisions.jsonl" ]] \
+  && ok "hot path logs nothing (no self-reinforcement)" \
+  || no "hot path logged a decision it already knew: $(cat "$DEC/decisions.jsonl")"
+
+echo "== kit for: cold path logs a gold label =="
+cat > "$BIN/claude" <<'EOF'
+#!/usr/bin/env bash
+echo '{"result":"{\"kit\":\"db\",\"why\":\"db work\"}"}'
+EOF
+chmod +x "$BIN/claude"
+COLD="$TMP/dec-cold"; mkdir -p "$COLD"
+out="$(KOG_DECIDER_DIR="$COLD" "$ROOT/bin/kit" for "rework the python auth login flow with tests" 2>&1)"
+if [[ -s "$COLD/decisions.jsonl" ]] && command -v jq >/dev/null 2>&1; then
+  logged_kit="$(jq -r '.decision.kit' "$COLD/decisions.jsonl" | head -1)"
+  logged_sig="$(jq -r '.signals | join(" ")' "$COLD/decisions.jsonl" | head -1)"
+  [[ "$logged_kit" == "db" ]] && ok "cold path logs the model's pick" || no "logged kit: $logged_kit"
+  case " $logged_sig " in
+    *" auth "*) ok "logged decision carries canonical signals" ;;
+    *) no "logged signals not canonical: '$logged_sig'" ;;
+  esac
+else
+  no "cold path logs a gold label" "no decisions.jsonl written: $out"
+fi
 make_claude 0
 clean_tmp
 

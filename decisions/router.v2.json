@@ -1,0 +1,29 @@
+{
+  "version": 2,
+  "built_from": {
+    "decisions": 2
+  },
+  "rules": [
+    {
+      "kit": "build",
+      "signals_any": [
+        "auth",
+        "feature",
+        "multi-file",
+        "python",
+        "security",
+        "testing"
+      ],
+      "support": 1
+    },
+    {
+      "kit": "lean",
+      "signals_any": [
+        "docs",
+        "single-file",
+        "trivial"
+      ],
+      "support": 1
+    }
+  ]
+}

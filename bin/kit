@@ -513,11 +513,29 @@ cmd_picker() {  # $1 = optional base kit to seed the pack with
 # catalog and let it pick the leanest kit that fits. Prints the pick + the launch
 # command; with --go it launches immediately (the task is forwarded as the prompt).
 cmd_for() {
-  need python3; need jq; need claude
+  need python3; need jq
   local go=""
   if [[ "${1:-}" == "--go" || "${1:-}" == "-y" ]]; then go=1; shift; fi
   local task="$*"
   [[ -n "$task" ]] || die "usage: kit for [--go] \"<task description>\""
+
+  # ---- hot path: the learned router --------------------------------------
+  # The selector's distilled experience answers instantly when the task's
+  # canonical signals overlap a known rule — no model, no harness startup.
+  # Nothing is logged here on purpose: re-recording a pick the router already
+  # makes would only inflate its own support counts.
+  local decider="$ROOT/skills/lib/decider.sh" learned=""
+  if [[ -x "$decider" ]]; then
+    learned="$("$decider" match "$task" 2>/dev/null)" || learned=""
+  fi
+  if [[ -n "$learned" ]]; then
+    echo "🦊 for: $learned  — learned router (no model call)" >&2
+    if [[ -n "$go" ]]; then cmd_launch "$learned" "$task"; else
+      echo "     run: kit $learned -- \"$task\"" >&2; fi
+    return 0
+  fi
+
+  need claude
   # compact the resolved catalog: kit names + contents + weight, plus à la carte item names.
   local list catalog
   list="$(bc --list)" || die "could not read kit catalog"
@@ -557,6 +575,27 @@ EOF
     return 1
   fi
   echo "🦊 for: $kit${why:+  — $why}" >&2
+
+  # ---- feed the loop -----------------------------------------------------
+  # Cold path only: the router had no opinion, so this pick is genuinely new
+  # information. Log it as a gold label with canonical signals so the next
+  # `decider distill` can route this shape without a model. Best-effort —
+  # a selector must never fail because logging did.
+  if [[ -x "$decider" && "${KOG_KIT_FOR_LOG:-1}" != "0" ]]; then
+    local signals record
+    signals="$("$decider" normalize "$task" 2>/dev/null | jq -R . | jq -s -c . 2>/dev/null)" || signals=""
+    if [[ -n "$signals" && "$signals" != "[]" ]]; then
+      record="$(jq -n -c \
+        --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg task "$task" \
+        --arg kit "$kit" --arg why "$why" --arg sha "$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)" \
+        --argjson signals "$signals" \
+        '{ts:$ts, decider:"claude-haiku", source:"kit-for", git_sha:$sha, task:$task,
+          decision:{kit:$kit, launch:("kit " + $kit + " -- \"" + $task + "\"")},
+          signals:$signals, rationale:$why, confidence:0.6}' 2>/dev/null)" || record=""
+      [[ -n "$record" ]] && "$decider" append-decision "$record" >/dev/null 2>&1 || true
+    fi
+  fi
+
   if [[ -n "$go" ]]; then
     cmd_launch "$kit" "$task"
   else
