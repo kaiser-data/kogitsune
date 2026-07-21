@@ -14,3 +14,6 @@ __pycache__/
 # os
 .DS_Store
 /docs/*-LOCAL.md
+
+# graphify knowledge-graph output (regenerable: `graphify update .`)
+/graphify-out/
