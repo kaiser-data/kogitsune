@@ -4,6 +4,7 @@
 
 # generated session configs
 .kogitsune-session-*.json
+.kogitsune/
 tmp/
 
 # python
