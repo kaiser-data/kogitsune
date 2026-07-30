@@ -138,6 +138,18 @@ launch_from_manifest() {
     model_args=(--model "$model"); mstr="--model $model "
     echo "🦊 model: $model" >&2
   fi
+  # Export the pack onto the session so a running session can read what it is running —
+  # this is what the `repack` skill reads. `remember_kit` writes a *global* last-launched
+  # state file, which is not per-session and lies when several sessions overlap.
+  # Assigned before export so shellcheck can still see the command's exit status (SC2155).
+  local pack_kit pack_skills pack_mcp
+  pack_kit="$(jq -r '.kit // ""' "$manifest")"
+  pack_skills="$(jq -r '[.items[] | select(.kind != "mcp") | .name] | join(",")' "$manifest")"
+  pack_mcp="$(jq -r '[.items[] | select(.kind == "mcp") | .name] | join(",")' "$manifest")"
+  export KOGITSUNE_KIT="$pack_kit"
+  export KOGITSUNE_PACK_SKILLS="$pack_skills"
+  export KOGITSUNE_PACK_MCP="$pack_mcp"
+  export KOGITSUNE_PACK_MODEL="$model"
   if [[ -n "${KIT_DRY_RUN:-}" ]]; then
     jq -r '"would launch:  kit=\(.kit // "(à la carte)")  model=\(.model // "(default)")  "
            + "mcp=\(.mcp_config.mcpServers|keys|join(","))  "
