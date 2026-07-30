@@ -18,20 +18,31 @@ Selects *for* `kit-builder`.
 - Before `kit <name> -- "<task>"`, to justify the pick
 - When you want to avoid a slow full-harness model classification for an obvious task
 
+## Resolve the datastore first
+This skill is published to `~/.claude/skills/` and runs from whatever directory the
+session is in, so `decider` is **not** on PATH and no repo-relative path is safe. `kit`
+is on PATH and points into the repo — resolve through it:
+```bash
+KOG_ROOT="$(cd "$(dirname "$(readlink "$(command -v kit)" 2>/dev/null || command -v kit)")/.." && pwd)"
+DECIDER="$KOG_ROOT/skills/lib/decider.sh"
+```
+If `kit` is not on PATH, say so and stop rather than guessing a location.
+
 ## How it works
-1. Load inputs: `decider latest context` (menu) and `decider latest router` (learned rules).
-2. **Hot path** — `decider match "<task>"` prints the best kit and exits 0. It normalizes
+1. Load inputs: `"$DECIDER" latest context` (menu) and `"$DECIDER" latest router` (learned rules).
+2. **Hot path** — `"$DECIDER" match "<task>"` prints the best kit and exits 0. It normalizes
    the task to canonical signals and takes the rule with the most overlap (ties break on
-   support, then kit name, so the same task always routes the same way). No model call.
+   **weight** — summed confidence — then support, then kit name, so the same task always
+   routes the same way). No model call.
 3. **Cold path** — `match` exits 1: nothing overlapped. Reason over the context to compose
    the config (kit *or* à-la-carte model+MCP+skills). This is the teacher step.
-4. Log it: `decider append-decision '<json>'` with `task`, `decision`, **`signals`**,
+4. Log it: `"$DECIDER" append-decision '<json>'` with `task`, `decision`, **`signals`**,
    `rationale`, `confidence`, `alternatives` (see `decisions/SCHEMA.md`).
-5. Periodically `decider distill` → bumps `router.v<N+1>.json` from all decisions.
+5. Periodically `"$DECIDER" distill` → bumps `router.v<N+1>.json` from all decisions.
 
 ## Canonical signals
 The router can only aggregate what it can compare, so `distill` folds every signal onto a
-fixed vocabulary (`decider normalize "<text>"` shows it for any text):
+fixed vocabulary (`"$DECIDER" normalize "<text>"` shows it for any text):
 
 `auth` · `security` · `testing` · `docs` · `performance` · `refactor` · `bugfix` ·
 `feature` · `multi-file` · `single-file` · `trivial` · `python` · `typescript` · `go` ·

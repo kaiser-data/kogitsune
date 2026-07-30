@@ -16,18 +16,28 @@ the menu — hand it a fresh, structured one.
 ## When to Use
 - Superpowers or ECC plugins updated, or new skills/agents installed
 - `kit ls` / `kits.yaml` changed (catalog_hash differs from latest context)
-- A selection is about to run but `decider latest context` is empty or stale
+- A selection is about to run but the latest context is empty or stale
+
+## Resolve the datastore first
+This skill is published to `~/.claude/skills/` and runs from whatever directory the
+session is in, so `decider` is **not** on PATH and no repo-relative path is safe. `kit`
+is on PATH and points into the repo — resolve through it:
+```bash
+KOG_ROOT="$(cd "$(dirname "$(readlink "$(command -v kit)" 2>/dev/null || command -v kit)")/.." && pwd)"
+DECIDER="$KOG_ROOT/skills/lib/decider.sh"
+```
+If `kit` is not on PATH, say so and stop rather than guessing a location.
 
 ## How it works
 1. Enumerate sources: `kit ls`, the superpowers skill list, the ECC agent/skill list.
 2. Group by role — superpowers = *methodology*, ECC = *capability/reviewers*, kits = *presets*.
 3. Note the pinned-always layer (guardrails, memory, graphify) so the selector ignores it.
-4. Persist: `skills/lib/decider.sh write-context '<json>'` → writes `context.v<N>.json`,
+4. Persist: `"$DECIDER" write-context '<json>'` → writes `context.v<N>.json`,
    auto-incrementing the version. Include `catalog_hash` (fingerprint of kits.yaml + kit list).
 
 ## Improve with experience
 Each run is a new versioned snapshot — history is never overwritten. When the catalog
-churns, re-scout; the selector always reads `decider latest context`. Diffing two
+churns, re-scout; the selector always reads `"$DECIDER" latest context`. Diffing two
 context versions shows what capability entered/left the environment.
 
 ## Versioning
