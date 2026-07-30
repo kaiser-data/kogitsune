@@ -22,7 +22,12 @@ BIN="$TMP/bin"; mkdir -p "$BIN"
 make_claude(){ # $1 = exit code
   cat > "$BIN/claude" <<EOF
 #!/usr/bin/env bash
-{ echo "CLAUDE_CONFIG_DIR=\${CLAUDE_CONFIG_DIR:-}"; echo "ARGS: \$*"; } > "$TMP/claude.log"
+{ echo "CLAUDE_CONFIG_DIR=\${CLAUDE_CONFIG_DIR:-}"
+  echo "KOGITSUNE_KIT=\${KOGITSUNE_KIT:-}"
+  echo "KOGITSUNE_PACK_SKILLS=\${KOGITSUNE_PACK_SKILLS:-}"
+  echo "KOGITSUNE_PACK_MCP=\${KOGITSUNE_PACK_MCP:-}"
+  echo "KOGITSUNE_PACK_MODEL=\${KOGITSUNE_PACK_MODEL:-}"
+  echo "ARGS: \$*"; } > "$TMP/claude.log"
 exit ${1:-0}
 EOF
   chmod +x "$BIN/claude"; }
@@ -77,6 +82,35 @@ grep -q -- "--model haiku" "$TMP/claude.log" && ! grep -q -- "--model opus --mod
 # lean has no model -> no --model flag at all
 "$ROOT/bin/kit" lean >/dev/null 2>&1
 ! grep -q -- "--model" "$TMP/claude.log" && ok "no --model when kit declares none" || no "spurious --model: $(grep ARGS "$TMP/claude.log")"
+clean_tmp
+
+echo "== pack identity export =="
+# A session cannot repack what it cannot identify. remember_kit writes a *global*
+# last-launched file, which is not per-session and lies when sessions overlap — so the
+# pack rides on the claude process env instead, where the session can read it.
+"$ROOT/bin/kit" db >/dev/null 2>&1
+grep -q "^KOGITSUNE_KIT=db$" "$TMP/claude.log" \
+  && ok "KOGITSUNE_KIT names the launched kit" \
+  || no "KOGITSUNE_KIT not exported: $(grep KOGITSUNE_KIT "$TMP/claude.log")"
+grep -q "^KOGITSUNE_PACK_MODEL=opus$" "$TMP/claude.log" \
+  && ok "KOGITSUNE_PACK_MODEL carries the resolved model" \
+  || no "KOGITSUNE_PACK_MODEL wrong: $(grep KOGITSUNE_PACK_MODEL "$TMP/claude.log")"
+grep -q "^KOGITSUNE_PACK_SKILLS=postgres-bp$" "$TMP/claude.log" \
+  && ok "KOGITSUNE_PACK_SKILLS lists the packed non-MCP items" \
+  || no "KOGITSUNE_PACK_SKILLS wrong: $(grep KOGITSUNE_PACK_SKILLS "$TMP/claude.log")"
+grep -q "^KOGITSUNE_PACK_MCP=supabase$" "$TMP/claude.log" \
+  && ok "KOGITSUNE_PACK_MCP lists the packed servers" \
+  || no "KOGITSUNE_PACK_MCP wrong: $(grep KOGITSUNE_PACK_MCP "$TMP/claude.log")"
+# the two lists must stay disjoint — a repack diff that mixes kinds sheds the wrong thing
+case "$(grep '^KOGITSUNE_PACK_SKILLS=' "$TMP/claude.log")" in
+  *supabase*) no "MCP server leaked into KOGITSUNE_PACK_SKILLS" ;;
+  *) ok "MCP names kept out of the skills list" ;;
+esac
+# a kit that declares no model exports an empty string, not a stale one
+"$ROOT/bin/kit" lean >/dev/null 2>&1
+grep -q "^KOGITSUNE_PACK_MODEL=$" "$TMP/claude.log" \
+  && ok "no declared model exports empty, not stale" \
+  || no "stale model leaked: $(grep KOGITSUNE_PACK_MODEL "$TMP/claude.log")"
 clean_tmp
 
 # regression: --mcp-config is variadic, so it must come LAST or a stray passthrough
@@ -370,6 +404,36 @@ else
   no "cold path logs a gold label" "no decisions.jsonl written: $out"
 fi
 make_claude 0
+clean_tmp
+
+echo "== repack relaunch path (save a derived kit, then launch it) =="
+# repack's entire restart mechanism is `kit save _repack` + `kit _repack -- ARGS`.
+# These guard the reused primitives. Save MUTATES the config file, so work on a copy —
+# never the shared fixture.
+RCFG="$TMP/repack-kits.yaml"; cp "$FIX/kits.yaml" "$RCFG"
+( export KOGITSUNE_CONFIG="$RCFG"
+  "$ROOT/bin/kit" save _repack --skills postgres-bp --mcp supabase --model opus >/dev/null 2>&1 )
+grep -q '^  _repack:' "$RCFG" \
+  && ok "kit save writes the derived _repack kit" \
+  || no "_repack not saved into the config"
+out="$( export KOGITSUNE_CONFIG="$RCFG"; KIT_DRY_RUN=1 "$ROOT/bin/kit" _repack 2>&1 )"
+grep -q "kit=_repack" <<<"$out" \
+  && ok "_repack resolves and would launch" \
+  || no "_repack did not resolve: $out"
+grep -q "model=opus" <<<"$out" \
+  && ok "derived kit carries its model" \
+  || no "derived model lost: $out"
+# _repack is reserved scratch: re-saving must overwrite, never accumulate entries
+( export KOGITSUNE_CONFIG="$RCFG"
+  "$ROOT/bin/kit" save _repack --skills postgres-bp --model sonnet >/dev/null 2>&1 )
+[[ "$(grep -c '^  _repack:' "$RCFG")" == "1" ]] \
+  && ok "re-saving _repack overwrites rather than duplicating" \
+  || no "_repack duplicated on re-save: $(grep -c '^  _repack:' "$RCFG") entries"
+# the handoff is passed as the opening prompt via the -- passthrough
+out="$( export KOGITSUNE_CONFIG="$RCFG"; KIT_DRY_RUN=1 "$ROOT/bin/kit" _repack -- "picking up where we left off" 2>&1 )"
+grep -q "picking up where we left off" <<<"$out" \
+  && ok "handoff text rides in as the opening prompt" \
+  || no "handoff prompt dropped: $out"
 clean_tmp
 
 echo "== kog_cleanup path safety =="

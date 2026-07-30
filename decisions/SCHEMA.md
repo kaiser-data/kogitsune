@@ -33,6 +33,7 @@ Tiers the log is meant to bootstrap:
 | `signals` | string[] | task features that drove the pick — **the learnable input** |
 | `rationale` | string | one-line why |
 | `confidence` | number | 0–1 |
+| `source` | string | how the decision was reached — `repack` for a mid-session repack, absent for an up-front pick |
 | `alternatives` | object[] | `{kit, why_not}` runners-up — negative labels for learning |
 
 `signals` + `decision` are the (X → y) pairs a future classifier/skill learns from;
@@ -82,3 +83,18 @@ automated picks would eventually outrank a hand-made 0.97 label. An absent or no
 `confidence` is read as `0.5` — unstated is middling, never certain.
 
 This is why `confidence` is worth setting honestly. It is not decoration; it is the vote.
+
+## Source weighting
+
+`source` records *when* a decision was made, which changes how much it is worth. An
+up-front pick is a guess from a one-line task description, made at the moment you know
+least about the task. A **repack** decision is made mid-task, against what the session
+turned out to actually need — a label produced by felt need rather than by prediction.
+
+`distill` therefore multiplies a `source: "repack"` record's confidence by
+`SOURCE_WEIGHT_REPACK` (1.5, in `skills/lib/decider.sh`) before it reaches a rule's
+`weight`. Absent or unrecognised sources are neutral. `support` is unaffected — it stays
+an honest count of how many decisions produced the rule.
+
+The scaling is deliberately mild: repack labels should win ties and near-ties against
+up-front guesses, not overwrite the hand-made gold labels.

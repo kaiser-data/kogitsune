@@ -17,12 +17,22 @@ compositions hold up. Builds *what the selector selected*.
 - A recurring composition deserves promotion to a named kit in `kits.yaml`
 - Capturing build success/failure to feed the learning loop
 
+## Resolve the datastore first
+This skill is published to `~/.claude/skills/` and runs from whatever directory the
+session is in, so `decider` is **not** on PATH and no repo-relative path is safe. `kit`
+is on PATH and points into the repo — resolve through it:
+```bash
+KOG_ROOT="$(cd "$(dirname "$(readlink "$(command -v kit)" 2>/dev/null || command -v kit)")/.." && pwd)"
+DECIDER="$KOG_ROOT/skills/lib/decider.sh"
+```
+If `kit` is not on PATH, say so and stop rather than guessing a location.
+
 ## How it works
 1. Read the decision (from `decisions.jsonl` or passed inline).
 2. If it maps to an existing kit → emit the launch command. If it's a novel composition
    → assemble a `kits.yaml` entry (`model`, `mcp`, `skills`) and validate it resolves
    (`kit show <name>` / dry-run).
-3. Record the outcome: `decider append-build '<json>'` with `from_decision`, `built`,
+3. Record the outcome: `"$DECIDER" append-build '<json>'` with `from_decision`, `built`,
    `success`, `notes` (see `decisions/SCHEMA.md`).
 
 ## Improve with experience

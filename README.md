@@ -292,12 +292,43 @@ Signals are canonicalized before they reach a rule, so `"auth/security-sensitive
 `"needs a login audit"` reinforce the *same* rule instead of two unrelated ones — see
 [`decisions/SCHEMA.md`](decisions/SCHEMA.md) for the vocabulary.
 
+### When the pick was wrong: `repack`
+
+`kit for` still picks *before* the session, from a one-line description — a guess made at the
+moment you know least. The `repack` skill re-derives the pack **mid-flight**, from what the
+work turned out to actually be:
+
+```
+repack: task looks like Vue + Postgres
+
+  + vue-patterns, supabase
+  - n8n, html-email
+  model: sonnet -> opus
+
+  net -2.7K   ·   14.2K -> 11.5K
+
+restart to apply? [y/N]
+```
+
+On confirm it writes a handoff note, saves the derived pack as the reserved `_repack` kit, and
+**prints** `kit _repack -- "$(cat .kogitsune/handoff.md)"` for you to run — it never kills the
+session itself. A restart is required because model, `CLAUDE.md`, and hooks are fixed at
+process start; MCP alone needs no restart (use `kitsune`).
+
+**Shedding is first-class.** Every proposal names what to drop, not only what to add —
+add-only repacking is what produces the heavy session kogitsune exists to prevent.
+
+Repack decisions are logged with `source: "repack"` and count for more in `distill` than
+up-front picks: they are labelled by felt need mid-task rather than by prediction.
+
 ## Status
 
 🦊 **Working MVP core.** Resolver + manifest, pack-weight estimator, curated-mirror launcher,
 `kit ls` / `show` / `doctor` / direct `kit <name>`, and the `fzf` tuning picker (seed, toggle,
 preset-load) all work and are tested. `install.sh` rounds it out. See [`docs/spike/FINDINGS.md`](docs/spike/FINDINGS.md) for the validated
 mechanism and [`docs/PRIOR-ART.md`](docs/PRIOR-ART.md) for where this sits in the landscape.
+
+**Grok Build:** the launcher is Claude-only today; skills already surface via Claude compat. For how to make kits useful in Grok (Tier 0–3), see [`docs/NOTE-grok-build.md`](docs/NOTE-grok-build.md).
 
 ## Development & testing
 

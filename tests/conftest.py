@@ -26,6 +26,11 @@ def ctxest():
     return _load("ctxest", "context-est.py")
 
 
+@pytest.fixture(scope="session")
+def packdiff():
+    return _load("packdiff", "pack-diff.py")
+
+
 @pytest.fixture(autouse=True)
 def _fixture_roots(monkeypatch):
     monkeypatch.setenv("KOGITSUNE_SKILLS_DIR", str(FIXTURES / "skills"))
