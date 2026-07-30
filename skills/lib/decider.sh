@@ -49,6 +49,15 @@ go|golang| go |goroutine
 rust|rust|cargo|clippy
 shell|bash| shell |zsh|shellcheck'
 
+# ---- source weighting -------------------------------------------------------
+# A decision's `confidence` is its vote (see decisions/SCHEMA.md). `source` scales that
+# vote: a repack label is written mid-task, when the need is actually felt, rather than
+# guessed from a one-line description before any work happened — so it is better training
+# data per unit of stated confidence. Unrecognised or absent sources are neutral (1.0),
+# and the scaling is deliberately mild: repack labels should win ties and near-ties
+# against up-front guesses, not overwrite hand-made gold labels.
+SOURCE_WEIGHT_REPACK=1.5
+
 normalize_text(){ # text -> canonical tokens, one per line, sorted + deduped
   local s row tok pats pat
   s="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' ' ' | tr -s ' ')"
@@ -147,9 +156,12 @@ cmd_distill(){
     [[ -n "$kit" && "$kit" != "custom" ]] || continue
     case "$launch" in n/a*) continue ;; esac
     raw="$(printf '%s' "$line" | jq -r '[.signals[]?] | join(" ")')"
-    # an unstated or malformed confidence is treated as middling, never as certain
-    conf="$(printf '%s' "$line" \
-      | jq -r 'if (.confidence|type) == "number" then .confidence else 0.5 end')"
+    # an unstated or malformed confidence is treated as middling, never as certain,
+    # then scaled by `source` — jq does the float math (bash 3.2 cannot).
+    conf="$(printf '%s' "$line" | jq -r --argjson rf "$SOURCE_WEIGHT_REPACK" '
+      (if (.confidence|type) == "number" then .confidence else 0.5 end)
+      * (if .source == "repack" then $rf else 1.0 end)
+      | . * 1000 | round / 1000')"
     jq -n -c --arg kit "$kit" --argjson sig "$(tokens_json "$raw")" --argjson conf "$conf" \
       '{kit:$kit, signals:$sig, confidence:$conf}' >> "$tmp"
   done < "$DEC"

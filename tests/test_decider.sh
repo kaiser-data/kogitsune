@@ -124,5 +124,42 @@ m="$(KOG_DECIDER_DIR="$DW" "$DECIDER" match 'update the readme docs' 2>/dev/null
   && ok "one confident decision beats two hesitant ones" \
   || no "one confident decision beats two hesitant ones" "got: '$m'"
 
+echo "== decider: repack decisions outweigh up-front guesses =="
+# A repack label is written mid-task, when the need is actually felt, rather than
+# guessed from a one-line description before any work happened. 0.4 from a repack must
+# therefore beat 0.5 from an up-front pick.
+SW="$(newdir)"
+KOG_DECIDER_DIR="$SW" "$DECIDER" append-decision \
+  '{"task":"a","decision":{"kit":"flow"},"signals":["auth"],"confidence":0.4,"source":"repack"}' >/dev/null 2>&1
+KOG_DECIDER_DIR="$SW" "$DECIDER" append-decision \
+  '{"task":"b","decision":{"kit":"lean"},"signals":["auth"],"confidence":0.5}' >/dev/null 2>&1
+rs="$(KOG_DECIDER_DIR="$SW" "$DECIDER" distill 2>/dev/null)"
+if command -v jq >/dev/null 2>&1; then
+  rwt="$(jq -r '.rules[] | select(.kit=="flow") | .weight' "$rs" 2>/dev/null)"
+  rsp="$(jq -r '.rules[] | select(.kit=="flow") | .support' "$rs" 2>/dev/null)"
+  [[ "$rwt" == "0.6" ]] \
+    && ok "source=repack scales weight (0.4 x 1.5 = 0.6)" \
+    || no "source=repack scales weight" "weight=$rwt"
+  [[ "$rsp" == "1" ]] \
+    && ok "support stays a raw count, unscaled" \
+    || no "support stays a raw count" "support=$rsp"
+fi
+m="$(KOG_DECIDER_DIR="$SW" "$DECIDER" match 'audit the login flow' 2>/dev/null)"
+[[ "$m" == "flow" ]] \
+  && ok "a repack label outranks a more confident up-front guess" \
+  || no "a repack label outranks a more confident up-front guess" "got: '$m'"
+
+echo "== decider: unknown and absent source stay neutral =="
+SN="$(newdir)"
+KOG_DECIDER_DIR="$SN" "$DECIDER" append-decision \
+  '{"task":"a","decision":{"kit":"flow"},"signals":["auth"],"confidence":0.4,"source":"whatever"}' >/dev/null 2>&1
+rn="$(KOG_DECIDER_DIR="$SN" "$DECIDER" distill 2>/dev/null)"
+if command -v jq >/dev/null 2>&1; then
+  nwt="$(jq -r '.rules[] | select(.kit=="flow") | .weight' "$rn" 2>/dev/null)"
+  [[ "$nwt" == "0.4" ]] \
+    && ok "unrecognised source leaves confidence untouched" \
+    || no "unrecognised source leaves confidence untouched" "weight=$nwt"
+fi
+
 echo; echo "decider tests: $pass passed, $fail failed"
 [[ "$fail" == 0 ]]
