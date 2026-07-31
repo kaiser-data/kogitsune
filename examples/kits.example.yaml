@@ -3,10 +3,14 @@
 # ~/.claude/mcp-on-demand.json by name, so you only reference them here.
 
 # Always rides along — never a toggle.
+# repack is pinned deliberately: it is the escape hatch for a wrong pack, so it has to
+# be present *before* you know you need it. A catalog entry cannot do that — acquiring
+# it would cost the restart that repack exists to avoid.
 pinned:
   memory:     { plugin: "claude-mem@thedotmack" }
   guardrails: { import: "~/.claude/rules/guardrails.md" }
   graphify:   { skill: "graphify" }
+  repack:     { skill: "repack" }
 
 # Catalog of selectable items, with rough context-weight hints (tokens) for the pack-weight bar.
 catalog:

@@ -17,12 +17,16 @@ import argparse
 import json
 import sys
 
-# Marginal cost of the pinned trio (memory + guardrails + graphify) ON TOP of base
-# Claude Code. Calibrated from `kit measure`: a lean session measured ~24.9K total,
+# Marginal cost of the pinned set (memory + guardrails + graphify + repack) ON TOP of
+# base Claude Code. Calibrated from `kit measure`: a lean session measured ~24.9K total,
 # of which ~22.3K is base CC (system prompt + tool schemas) — see docs. The remaining
-# ~2.7K is what kogitsune actually pins. This is the bar's zero point; the ~22K base
+# ~2.8K is what kogitsune actually pins. This is the bar's zero point; the ~22K base
 # floor is fixed for every session and is reported separately by `kit measure --calibrate`.
-LEAN_BASELINE = 2700  # approx tokens for pinned memory + guardrails + graphify
+#
+# Pinned weights never reach the bar total (build-config sums `items` only), so this
+# constant is the ONLY place a pinned item's cost is represented — bump it when the
+# pinned set changes. repack adds ~85 (frontmatter description only; its body defers).
+LEAN_BASELINE = 2785  # approx tokens for pinned memory + guardrails + graphify + repack
 
 # A rough ceiling used to scale the bar; selections above this just peg the bar full.
 BAR_FULL_AT = 30000

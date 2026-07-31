@@ -75,15 +75,15 @@ save it as a new kit).
  pack › db                                     ┌─ preview ──────────────────────┐
   🦊 db             ~12K  preset                 │ 🦊 pack your kit               │
   🦊 db-heavy       ~16K  preset                 │                                │
-  🦊 lean           ~0K   preset                 │ pack weight: ~14.7K tokens     │
+  🦊 lean           ~0K   preset                 │ pack weight: ~14.8K tokens     │
 ▶ ✔ 🔴 supabase     ~10K  (mcp)   ← in pack      │  ▓▓▓▓▓▓▓▓▓░░░░░░░░░░░░░░        │
-  ○ 🟠 notion       ~4K   (mcp)   ← toggle on    │  (lean = ~2.7K)                │
+  ○ 🟠 notion       ~4K   (mcp)   ← toggle on    │  (lean = ~2.8K)                │
   ✔ 🟡 postgres-bp  ~2K   (skill)                │ model:  opus  (ctrl-o cycles)  │
   ○ 🟢 frontend     ~1K   (skill)                │                                │
                                                  │ mcp:    supabase               │
                                                  │ skills: postgres-bp            │
  space/tab · 🦊 loads preset · ctrl-o model ·     │ pinned: memory · guardrails ·  │
- ctrl-p hide presets · enter · ctrl-s save        │         graphify               │
+ ctrl-p hide presets · enter · ctrl-s save        │         graphify · repack      │
                                                  └────────────────────────────────┘
 ```
 
@@ -187,6 +187,7 @@ pinned:                                   # always on, never a toggle
   memory:     { plugin: "claude-mem@thedotmack" }
   guardrails: { import: "~/.claude/rules/guardrails.md" }
   graphify:   { skill: "graphify" }
+  repack:     { skill: "repack" }         # escape hatch — must predate the need
 
 catalog:
   mcp:

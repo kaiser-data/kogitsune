@@ -251,7 +251,7 @@ cmd_measure() {  # launch a one-shot probe under the kit's mirror, record real c
   if echo "$cur" | jq --arg k "$kit" --argjson c "$ctx" '.[$k]=$c' > "$tmp" 2>/dev/null; then
     mv -f "$tmp" "$mf"; else rm -f "$tmp"; fi
   # report kit-only weight (total − floor) when calibrated, else nudge to calibrate.
-  # marginal includes the pinned trio, so compare it to the bar total (baseline + items),
+  # marginal includes the pinned set, so compare it to the bar total (baseline + items),
   # not the raw items-only catalog weight.
   local floor marg est_bar; floor="$(floor_val)"
   est_bar="$(ce --weights "$est" --json 2>/dev/null | jq -r '.total' 2>/dev/null || echo "$est")"
@@ -468,7 +468,7 @@ cmd_tune_preview() {  # $1=tunedir
   else
     echo "space/tab toggles · ctrl-p shows 🦊 preset rows"
   fi
-  echo "pinned (always): memory · guardrails · graphify"
+  echo "pinned (always): memory · guardrails · graphify · repack"
 }
 
 cmd_picker() {  # $1 = optional base kit to seed the pack with

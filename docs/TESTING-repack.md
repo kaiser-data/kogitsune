@@ -48,8 +48,15 @@ echo "kit=$KOGITSUNE_KIT skills=$KOGITSUNE_PACK_SKILLS mcp=$KOGITSUNE_PACK_MCP m
 
 | | |
 |---|---|
-| **Pass** | `kit=lean`, skills populated, `model=` empty (lean declares no model) |
-| **Fail** | all empty → the export is not reaching the session |
+| **Pass** | `kit=lean`, `mcp=kitsune`, `skills=` **empty**, `model=` empty |
+| **Fail** | *all four* empty → the export is not reaching the session |
+
+`skills=` and `model=` are empty because `lean` declares `skills: []` and no model
+(`kits.yaml:56`). That is a pass, not a failure — `kit=` and `mcp=` carrying values is
+what proves the export arrived. Any kit that declares skills will populate `skills=`.
+
+**Status: PASS**, observed directly on 2026-07-31 in a live `kit lean` session
+(`kit=lean mcp=kitsune skills= model=`). This closes the gap listed below.
 
 On failure, look at `bin/kit:141-152` and confirm `claude` still runs as a **child**
 process, not via `exec` (exec would also leak the mirror).
@@ -128,9 +135,26 @@ always stay an honest integer count.
 
 ## Known gaps
 
-- **Live-session pack identity** (§2) is inferred across two proven hops, not observed
-  directly. First real `/repack` closes it.
-- **One unexplained flake.** During development a single `make test` run reported
-  `82 passed, 1 failed` while a background `claude` session ran concurrently. Four
-  subsequent runs were clean and the failing assertion was never captured, so a genuine
-  concurrency flake cannot be ruled out.
+- ~~**Live-session pack identity** (§2) is inferred across two proven hops, not observed
+  directly.~~ **Closed 2026-07-31** — observed directly in a live `kit lean` session.
+- **One intermittent failure, now identified.** Captured 2026-07-31: it is
+  `tests/test_launcher.sh:280`, `preview model line missing` (`87 passed, 1 failed`).
+  Reproduced twice under `make check`, then clean on three reruns and on every
+  standalone `bash tests/test_launcher.sh` — so it is intermittent, not ordering.
+
+  Mechanism (confirmed): `bin/kit` runs `set -euo pipefail`, and `cmd_tune_preview`
+  (`bin/kit:449`) makes unchecked subprocess calls — `tune_total`'s jq, then
+  `context-est.py` — *before* it echoes the model line. Any transient non-zero exit
+  aborts the function mid-render. Verified by breaking `list.json` deliberately: the
+  preview truncates at exactly that point.
+
+  Two consequences: the test captures with `2>/dev/null`, so every failure of that
+  function reports itself as a missing model line and the real error is discarded —
+  which is why this went undiagnosed. And it is not test-only: in the real picker a
+  hiccup in either subprocess renders a silently half-drawn preview pane.
+
+  **Still unknown:** what makes those subprocesses transiently exit non-zero. Both
+  failures occurred immediately after `pytest` in the same `make` invocation, which
+  suggests spawn pressure, but three clean runs is not enough to claim that. Fix worth
+  making regardless: drop the `2>/dev/null` at line 280 so the next occurrence is
+  diagnosable, and make `cmd_tune_preview` fail loudly instead of truncating.
