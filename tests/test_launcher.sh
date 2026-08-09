@@ -374,6 +374,19 @@ hint="$("$PY_BIN" "$ROOT/lib/leak-scan.py" --rules-root "$HC/plain-rules" 2>/dev
 echo "$hint" | grep -q "rules_root:" && no "spurious hint for a clean root" || ok "no hint for a non-.claude rules root"
 clean_tmp
 
+echo "== picker: harness rows =="
+# a broken jq in the rows program kills EVERY row, not just the harness ones —
+# assert the row count too, not only the harness lines
+TDH="$TMP/tuneh"; mkdir -p "$TDH"
+"$PY_BIN" "$ROOT/lib/build-config.py" --config "$KOGITSUNE_CONFIG" \
+  --mcp-on-demand "$KOGITSUNE_MCP_ON_DEMAND" --list > "$TDH/list.json" 2>/dev/null
+jq -c '{mcp:[], skills:[], harness:((.harness // {})|keys)}' "$TDH/list.json" > "$TDH/state.json"
+echo 1 > "$TDH/presets"
+rows="$("$ROOT/bin/kit" __tune_rows "$TDH" 2>/dev/null)"
+[[ "$(printf '%s\n' "$rows" | grep -c .)" -gt 0 ]] && ok "picker rows render at all" || no "rows empty (jq broken?)"
+printf '%s\n' "$rows" | grep -q "(mcp)" && ok "mcp rows still present alongside harness" || no "mcp rows gone"
+clean_tmp
+
 echo "== completion helpers =="
 ln -sf "$ROOT/bin/kit" "$BIN/kit"   # so completion's `kit __kits` resolves on PATH
 "$BIN/kit" __kits 2>/dev/null | grep -qx "db" && ok "__kits lists kit names" || no "__kits missing 'db'"

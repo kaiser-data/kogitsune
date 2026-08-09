@@ -149,5 +149,8 @@ worktrees]`. Every other kit is untouched.
    scaled from `MIN_SESSION` 13,500 to `BAR_FULL_AT` 50,000. Modelled vs measured: `lean`
    16.8K/16.4K, `ecc` 38.7K/39.6K — within ~2.5%. Re-measure `BASE_FLOOR` after a Claude
    Code upgrade; the built-in tool set is its largest term.
-4. **Expose harness in the picker.** It is config-only today; the fzf picker has no
-   third column for it.
+4. ~~**Expose harness in the picker.**~~ **Done.** Harness groups render as ordinary
+   `(harness)` rows with a 🔧 tag, toggled like any other item — ✔ keeps a group, ○ denies
+   it. A kit declaring no `harness:` seeds every box checked, since declaring nothing
+   denies nothing. The preview shows the saving, and `ctrl-s` saves the allowlist with the
+   kit.

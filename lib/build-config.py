@@ -338,16 +338,21 @@ def _fold(e: dict, plugins: dict, skill_srcs: list, imports: list, env: dict,
 # --- save a kit (comment-preserving, line-based) ----------------------------
 
 def render_kit_entry(name: str, mcp: list[str], skills: list[str],
-                     model: str | None = None) -> str:
+                     model: str | None = None,
+                     harness: list[str] | None = None) -> str:
     model_part = f"model: {model}, " if model else ""
+    # None is not the same as []: None means the kit says nothing about the harness
+    # (deny nothing), while [] is an explicit "deny every group".
+    harness_part = "" if harness is None else f", harness: [{', '.join(harness)}]"
     return (f"  {name}: {{ {model_part}mcp: [{', '.join(mcp)}], "
-            f"skills: [{', '.join(skills)}] }}")
+            f"skills: [{', '.join(skills)}]{harness_part} }}")
 
 
 def save_kit_text(text: str, name: str, mcp: list[str], skills: list[str],
-                  model: str | None = None) -> str:
+                  model: str | None = None,
+                  harness: list[str] | None = None) -> str:
     """Insert/replace a kit under the `kits:` block, preserving comments & order."""
-    entry = render_kit_entry(name, mcp, skills, model)
+    entry = render_kit_entry(name, mcp, skills, model, harness)
     lines = text.splitlines()
     kits_idx = next((i for i, l in enumerate(lines) if re.match(r"^kits:\s*$", l)), None)
     if kits_idx is None:
@@ -391,6 +396,10 @@ def _parse_args(argv):
     p.add_argument("--mcp-on-demand", default="~/.claude/mcp-on-demand.json")
     p.add_argument("--mcp", default="", help="comma/space list (when no kit)")
     p.add_argument("--skills", default="", help="comma/space list (when no kit)")
+    # None (flag absent) keeps every group; "" is an explicit deny-all, so the
+    # default must stay None rather than ""
+    p.add_argument("--harness", default=None,
+                   help="comma/space list of harness groups to KEEP (omit = keep all)")
     p.add_argument("--model", default="", help="model override (e.g. opus|sonnet|haiku)")
     p.add_argument("--out-dir", help="dir to write mcp.json into (default: a temp dir)")
     p.add_argument("--dry-run", action="store_true", help="print manifest, write nothing")
@@ -413,7 +422,8 @@ def main(argv=None) -> int:
         path = expand(ns.config)
         text = open(path).read() if os.path.isfile(path) else ""
         new = save_kit_text(text, ns.save, _split(ns.mcp), _split(ns.skills),
-                            ns.model or None)
+                            ns.model or None,
+                            None if ns.harness is None else _split(ns.harness))
         with open(path, "w") as fh:
             fh.write(new)
         sys.stderr.write(f"saved kit '{ns.save}' to {path}\n")
@@ -452,14 +462,20 @@ def main(argv=None) -> int:
                     "model": m["model"],
                     "mcp": [i["name"] for i in m["items"] if i["kind"] == "mcp"],
                     "skills": [i["name"] for i in m["items"] if i["kind"] != "mcp"],
+                    # null when the kit declares none — the picker then checks every
+                    # group, since declaring nothing denies nothing
+                    "harness": resolve_kit(kname, config.get("kits", {}) or {})["harness"],
+                    "harness_saved": m["harness_saved"],
                 }
             except Exception:
-                kit_info[kname] = {"weight": 0, "model": None, "mcp": [], "skills": []}
+                kit_info[kname] = {"weight": 0, "model": None, "mcp": [], "skills": [],
+                                   "harness": None, "harness_saved": 0}
         json.dump({"kits": config.get("kits", {}) or {},
                    "kit_info": kit_info,
                    "mcp": cat.get("mcp", {}) or {},
                    "skills": cat.get("skills", {}) or {},
                    "pinned": list((config.get("pinned", {}) or {}).keys()),
+                   "harness": config.get("harness", {}) or {},
                    "rules_root": rules_root(config)},
                   sys.stdout, indent=2)
         sys.stdout.write("\n")
@@ -467,7 +483,8 @@ def main(argv=None) -> int:
 
     manifest = build(config, mcp_servers, kit=ns.kit,
                      mcp_sel=_split(ns.mcp), skills_sel=_split(ns.skills),
-                     model=ns.model or None)
+                     model=ns.model or None,
+                     harness_sel=None if ns.harness is None else _split(ns.harness))
 
     if not ns.dry_run:
         out_dir = expand(ns.out_dir) if ns.out_dir else None

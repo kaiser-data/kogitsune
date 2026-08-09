@@ -374,19 +374,24 @@ save_target() {
   else echo "$CONFIG"; fi
 }
 
-cmd_save() {  # kit save <name> [--mcp a,b] [--skills x,y]
+cmd_save() {  # kit save <name> [--mcp a,b] [--skills x,y] [--harness g1,g2]
   need python3
   local name="${1:?usage: kit save <name> [--mcp a,b] [--skills x,y] [--model m]}"; shift
-  local mcp="" skills="" model=""
+  local mcp="" skills="" model="" harness="" have_harness=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --mcp) mcp="$2"; shift 2;; --skills) skills="$2"; shift 2;;
-      --model) model="$2"; shift 2;; *) shift;;
+      --model) model="$2"; shift 2;;
+      --harness) harness="$2"; have_harness=1; shift 2;;
+      *) shift;;
     esac
   done
   local target; target="$(save_target)"
+  # only pass --harness when the caller supplied one: the flag's absence means
+  # "keep every group", while an empty value means "deny every group"
   "$PY" "$LIB/build-config.py" --config "$target" --save "$name" \
-    --mcp "$mcp" --skills "$skills" --model "$model"
+    --mcp "$mcp" --skills "$skills" --model "$model" \
+    ${have_harness:+--harness "$harness"}
   echo "🦊 saved kit '$name' — launch it with: kit $name" >&2
 }
 
@@ -484,7 +489,11 @@ cmd_tune_rows() {  # $1=tunedir
   jq -r --slurpfile s "$d/state.json" --argjson show "$show" '
     def pad($n): (. + "                    ")[0:$n];
     ($s[0].mcp // []) as $m | ($s[0].skills // []) as $k |
-    def member($kind;$name): (if $kind=="mcp" then ($m|index($name)) else ($k|index($name)) end) != null;
+    ($s[0].harness // ((.harness // {})|keys)) as $h |
+    def member($kind;$name):
+      (if $kind=="mcp" then ($m|index($name))
+       elif $kind=="harness" then ($h|index($name))
+       else ($k|index($name)) end) != null;
     def glyph($b): if $b then "✔" else "○" end;
     ( ($m|length) + ($k|length) ) as $packsize |
     (if $show then ( .kit_info | to_entries[]
@@ -494,7 +503,9 @@ cmd_tune_rows() {  # $1=tunedir
     ( .mcp | to_entries[]
       | "\(glyph(member("mcp";.key))) \((.value.tag // "•")) \(.key|pad(14))  ~\((.value.weight//0)/1000|floor)K  (mcp)\tmcp\t\(.key)\t\(.value.weight // 0)" ),
     ( .skills | to_entries[]
-      | "\(glyph(member("skill";.key))) \((.value.tag // "•")) \(.key|pad(14))  ~\((.value.weight//0)/1000|floor)K  (skill)\tskill\t\(.key)\t\(.value.weight // 0)" )
+      | "\(glyph(member("skill";.key))) \((.value.tag // "•")) \(.key|pad(14))  ~\((.value.weight//0)/1000|floor)K  (skill)\tskill\t\(.key)\t\(.value.weight // 0)" ),
+    ( (.harness // {}) | to_entries[]
+      | "\(glyph(member("harness";.key))) 🔧 \(.key|pad(14))  ~\((.value.weight//0)/1000|floor)K  (harness)\tharness\t\(.key)\t0" )
   ' "$d/list.json"
 }
 
@@ -523,8 +534,10 @@ cmd_tune_toggle() {  # $1=tunedir $2=kind $3=name
   local d="$1" kind="$2" name="$3" tmp
   tmp="$d/state.json.$$"
   case "$kind" in
-    mcp|skill)
-      local key="mcp"; [[ "$kind" == "skill" ]] && key="skills"
+    mcp|skill|harness)
+      local key="mcp"
+      [[ "$kind" == "skill" ]] && key="skills"
+      [[ "$kind" == "harness" ]] && key="harness"
       if jq --arg n "$name" --arg key "$key" \
           'if (.[$key] | index($n)) then .[$key] -= [$n] else .[$key] += [$n] end' \
           "$d/state.json" > "$tmp" 2>/dev/null; then mv -f "$tmp" "$d/state.json"; else rm -f "$tmp"; fi
@@ -556,10 +569,16 @@ cmd_tune_toggle() {  # $1=tunedir $2=kind $3=name
 
 # fzf preview pane: live weight bar + the tuned pack contents.
 cmd_tune_preview() {  # $1=tunedir
-  local d="$1" total; total="$(tune_total "$d")"
+  local d="$1" total saved; total="$(tune_total "$d")"
+  # harness rows are an allowlist: every group NOT kept is denied, and its weight saved
+  saved="$(jq -r '[(.harness // {}) | to_entries[] | .value.weight // 0] as $all
+                  | ([(.harness // {}) | to_entries[] | select(.key as $k | $sel | index($k))
+                      | .value.weight // 0] | add // 0) as $kept
+                  | (($all | add // 0) - $kept)' \
+            --argjson sel "$(jq -c '.harness // []' "$d/state.json")" "$d/list.json" 2>/dev/null || echo 0)"
   echo "🦊 pack your kit"
   echo
-  "$PY" "$LIB/context-est.py" --weights "$total" --width 24
+  "$PY" "$LIB/context-est.py" --weights "$total" --harness-saved "${saved:-0}" --width 24
   echo
   local mdl note; mdl="$(cat "$d/model" 2>/dev/null || true)"
   if [[ -e "$d/model_locked" ]]; then note="(ctrl-o · locked to your choice)"; else note="(ctrl-o cycles · presets set it)"; fi
@@ -570,6 +589,8 @@ cmd_tune_preview() {  # $1=tunedir
   skills="$(jq -r '.skills|join(" ")' "$d/state.json")"
   [[ -n "$mcps"   ]] && echo "mcp:    $mcps"
   [[ -n "$skills" ]] && echo "skills: $skills"
+  [[ "${saved:-0}" -gt 0 ]] 2>/dev/null && \
+    echo "harness: −${saved} tok denied ($(jq -r '.harness // [] | join(" ")' "$d/state.json"))"
   [[ -z "$mcps$skills" ]] && echo "(lean — pinned only)"
   echo
   if tune_presets_shown "$d"; then
@@ -590,11 +611,14 @@ cmd_picker() {  # $1 = optional base kit to seed the pack with
   bc --list > "$d/list.json"
   # seed membership + model from a base kit if named, else start from scratch (pinned only)
   if [[ -n "${1:-}" ]]; then
-    jq --arg k "$1" '.kit_info[$k] // {mcp:[],skills:[]} | {mcp:(.mcp//[]), skills:(.skills//[])}' \
+    # a kit that declares no harness seeds every group checked: declaring nothing
+    # denies nothing, so the picker must not show it as "all denied"
+    jq --arg k "$1" '(.harness|keys) as $all | .kit_info[$k] // {mcp:[],skills:[]}
+       | {mcp:(.mcp//[]), skills:(.skills//[]), harness:(.harness // $all)}' \
       "$d/list.json" > "$d/state.json"
     jq -r --arg k "$1" '.kit_info[$k].model // empty' "$d/list.json" > "$d/model"
   else
-    echo '{"mcp":[],"skills":[]}' > "$d/state.json"
+    jq -c '{mcp:[], skills:[], harness:(.harness|keys)}' "$d/list.json" > "$d/state.json"
     : > "$d/model"
   fi
   echo 1 > "$d/presets"   # preset 🦊 rows visible by default (ctrl-p toggles)
@@ -616,16 +640,17 @@ cmd_picker() {  # $1 = optional base kit to seed the pack with
   local mcps skills mdl
   mcps="$(jq -r '.mcp|join(",")' "$d/state.json")"
   skills="$(jq -r '.skills|join(",")' "$d/state.json")"
+  local harn; harn="$(jq -r '.harness // [] | join(",")' "$d/state.json")"
   mdl="$(cat "$d/model" 2>/dev/null || true)"
   kog_cleanup "$d"; trap - EXIT INT TERM
   if [[ "$key" == "ctrl-s" ]]; then
     local nm; printf 'save as kit name: ' >&2; read -r nm </dev/tty || exit 0
     [[ -z "$nm" ]] && exit 0
-    cmd_save "$nm" --mcp "$mcps" --skills "$skills" --model "$mdl"
+    cmd_save "$nm" --mcp "$mcps" --skills "$skills" --model "$mdl" --harness "$harn"
     return
   fi
   [[ -z "${KIT_DRY_RUN:-}" ]] && need claude
-  local manifest; manifest="$(resolve_to_manifest --mcp "$mcps" --skills "$skills" --model "$mdl")"
+  local manifest; manifest="$(resolve_to_manifest --mcp "$mcps" --skills "$skills" --model "$mdl" --harness "$harn")"
   launch_from_manifest "$manifest"
 }
 
