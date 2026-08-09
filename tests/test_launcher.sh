@@ -246,13 +246,18 @@ jq -e '.mcp==["supabase"] and .skills==["postgres-bp"]' "$TD/state.json" >/dev/n
 rows="$("$ROOT/bin/kit" __tune_rows "$TD" 2>/dev/null)"
 printf '%s\n' "$rows" | grep -qE '^✔ .*supabase' && ok "in-pack item renders a ✔ glyph" || no "glyph: $(printf '%s' "$rows" | grep supabase)"
 pv="$("$ROOT/bin/kit" __tune_preview "$TD" 2>/dev/null)"
-printf '%s\n' "$pv" | grep -q "14.8K" && ok "preview bar sums tuned pack (+baseline)" || no "preview weight sum: $(printf '%s\n' "$pv" | grep -i token)"
+# derive the expectation from context-est rather than hardcoding a total: the bar's
+# constants are re-measured when Claude Code changes, and a magic number here would
+# fail for that reason alone (it has, twice)
+exp="$("$PY_BIN" "$ROOT/lib/context-est.py" --weights 10000 2000 | sed -E 's/.*~([0-9.]+K).*/\1/')"
+printf '%s\n' "$pv" | grep -q "$exp" && ok "preview bar sums tuned pack (+floor)" || no "preview weight sum: want $exp, got $(printf '%s\n' "$pv" | grep -i token)"
 # dropping a single item from the loaded preset
 "$ROOT/bin/kit" __tune_toggle "$TD" mcp supabase
 jq -e '.mcp==[] and .skills==["postgres-bp"]' "$TD/state.json" >/dev/null \
   && ok "toggling an item drops it from the pack" || no "item drop: $(cat "$TD/state.json")"
 pv="$("$ROOT/bin/kit" __tune_preview "$TD" 2>/dev/null)"
-printf '%s\n' "$pv" | grep -q "4.8K" && ok "bar updates after dropping an item" || no "bar after drop: $(printf '%s\n' "$pv" | grep -i token)"
+exp="$("$PY_BIN" "$ROOT/lib/context-est.py" --weights 2000 | sed -E 's/.*~([0-9.]+K).*/\1/')"
+printf '%s\n' "$pv" | grep -q "$exp" && ok "bar updates after dropping an item" || no "bar after drop: want $exp, got $(printf '%s\n' "$pv" | grep -i token)"
 # toggling the same item again re-adds it
 "$ROOT/bin/kit" __tune_toggle "$TD" mcp supabase
 jq -e '.mcp==["supabase"]' "$TD/state.json" >/dev/null && ok "re-toggling re-adds the item" || no "item re-add: $(cat "$TD/state.json")"

@@ -144,9 +144,10 @@ worktrees]`. Every other kit is untouched.
    `$HOME`). `kit doctor` keeps reporting the residual.
 2. **Wire the remaining kits** to the harness axis (§6) — each is a ~20K decision, and
    only `lean`/`db`/`build` have been made deliberately.
-3. **Re-baseline the bar.** `LEAN_BASELINE` (2,785) and `BAR_FULL_AT` describe a world
-   without the 41K floor, and the bar cannot show a harness saving that lands *below* its
-   baseline — hence the separate `harness: −N tok` line. Showing floor and pack as two
-   segments would make both legible.
+3. ~~**Re-baseline the bar.**~~ **Done.** `context-est.py` now models a whole session:
+   `BASE_FLOOR` 35,700 (measured with no items and no denials) + items − `harness_saved`,
+   scaled from `MIN_SESSION` 13,500 to `BAR_FULL_AT` 50,000. Modelled vs measured: `lean`
+   16.8K/16.4K, `ecc` 38.7K/39.6K — within ~2.5%. Re-measure `BASE_FLOOR` after a Claude
+   Code upgrade; the built-in tool set is its largest term.
 4. **Expose harness in the picker.** It is config-only today; the fzf picker has no
    third column for it.

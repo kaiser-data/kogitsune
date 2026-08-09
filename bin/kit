@@ -157,8 +157,10 @@ probe_capture() {
 }
 
 pack_weight_line() {  # $1=manifest.json
-  local w; w="$(jq -r '.weight' "$1")"
-  ce --weights "$w"
+  # whole-session estimate: built-in floor + items − harness denials
+  local w hs
+  w="$(jq -r '.weight' "$1")"; hs="$(jq -r '.harness_saved // 0' "$1")"
+  ce --weights "$w" --harness-saved "$hs"
 }
 
 # ---- launch a resolved selection -------------------------------------------
@@ -176,11 +178,11 @@ launch_from_manifest() {
     die "internal: resolved MCP config not found (mcp_config_path='${mcp_path:-<empty>}', manifest=$manifest) — please report"
   fi
   echo "🦊 $(pack_weight_line "$manifest")" >&2
-  # the harness axis cuts below the bar's baseline, so report it as its own line
+  # name the denials: the bar shows their effect, not that they happened
   local hs nd
   hs="$(jq -r '.harness_saved // 0' "$manifest")"; nd="$(jq -r '.deny | length' "$manifest")"
   [[ "$hs" =~ ^[0-9]+$ && "$hs" -gt 0 ]] && \
-    echo "   harness: −${hs} tok (${nd} built-in tool schemas denied)" >&2
+    echo "   (harness: ${nd} built-in tool schemas denied, −${hs} tok)" >&2
   # apply the kit/picker model, unless the user passes their own --model (which wins)
   local model user_model="" a; model="$(jq -r '.model // empty' "$manifest")"
   for a in "$@"; do [[ "$a" == "--model" || "$a" == --model=* ]] && user_model=1; done

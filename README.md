@@ -73,11 +73,11 @@ save it as a new kit).
 
 ```
  pack › db                                     ┌─ preview ──────────────────────┐
-  🦊 db             ~12K  preset                 │ 🦊 pack your kit               │
-  🦊 db-heavy       ~16K  preset                 │                                │
-  🦊 lean           ~0K   preset                 │ pack weight: ~14.8K tokens     │
-▶ ✔ 🔴 supabase     ~10K  (mcp)   ← in pack      │  ▓▓▓▓▓▓▓▓▓░░░░░░░░░░░░░░        │
-  ○ 🟠 notion       ~4K   (mcp)   ← toggle on    │  (lean = ~2.8K)                │
+  🦊 db             ~3K   preset                 │ 🦊 pack your kit               │
+  🦊 db-heavy       ~4K   preset                 │                                │
+  🦊 lean           ~2K   preset                 │ session weight: ~17.5K tokens  │
+▶ ✔ 🔴 supabase     ~3K   (mcp)   ← in pack      │  ▓░░░░░░░░░░░░░░░░░░░░░░        │
+  ○ 🟠 notion       ~4K   (mcp)   ← toggle on    │  (leanest ≈ 13.5K)             │
   ✔ 🟡 postgres-bp  ~2K   (skill)                │ model:  opus  (ctrl-o cycles)  │
   ○ 🟢 frontend     ~1K   (skill)                │                                │
                                                  │ mcp:    supabase               │
