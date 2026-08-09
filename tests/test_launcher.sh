@@ -62,6 +62,7 @@ export KOGITSUNE_HOME_CONFIG="$HC"
 export KOGITSUNE_HOME_DOTJSON="$TMP/dotjson.json"
 export XDG_STATE_HOME="$TMP/state"
 export TMPDIR="$TMP"
+PY_BIN="$(command -v python3)"
 
 echo "== launch contract + cleanup =="
 "$ROOT/bin/kit" db -- --model haiku "hi" >/dev/null 2>&1
@@ -316,12 +317,56 @@ echo 22000 > "$SD/floor"
 # floor larger than a measurement clamps to 0, never negative
 echo '{"db":21000}' > "$SD/measured.json"
 "$ROOT/bin/kit" ls 2>/dev/null | grep -q "measured ≈0 tok" && ok "marginal clamps at 0" || no "clamp: $("$ROOT/bin/kit" ls 2>/dev/null | grep db)"
-# doctor surfaces the calibrated floor
-"$ROOT/bin/kit" doctor 2>/dev/null | grep -q "base floor: ~22000 tok" && ok "doctor shows calibrated floor" || no "doctor floor: $("$ROOT/bin/kit" doctor 2>/dev/null | grep -i floor)"
+# doctor surfaces the calibrated floor (capture first — see the SIGPIPE note above)
+out="$("$ROOT/bin/kit" doctor 2>/dev/null)"
+echo "$out" | grep -q "base floor: ~22000 tok" && ok "doctor shows calibrated floor" || no "doctor floor: $(echo "$out" | grep -i floor)"
+# doctor warns about context the mirror cannot gate (ancestor CLAUDE.md / rules)
+echo "$out" | grep -q "mirror bypass" && ok "doctor reports mirror-bypass context" || no "doctor bypass: $out"
 rm -rf "$SD"
 # measure --calibrate routes to the calibrator (fake claude → graceful failure, no crash)
 out="$("$ROOT/bin/kit" measure --calibrate 2>&1)"; rc=$?
 echo "$out" | grep -q "calibrating base floor" && ok "measure --calibrate routes to calibrator" || no "calibrate route: $out"
+# measure --proxy routes to the capture path and fails cleanly when the probe never
+# sends (fake claude exits immediately) — must not hang waiting on a dead probe
+out="$("$ROOT/bin/kit" measure --proxy lean 2>&1)"; rc=$?
+echo "$out" | grep -q "capturing 'lean' payload via local proxy" && ok "measure --proxy routes to the capture path" || no "proxy route: $out"
+echo "$out" | grep -q "no request captured" && ok "measure --proxy fails cleanly with no capture" || no "proxy no-capture: $out"
+[[ $rc -ne 0 ]] && ok "measure --proxy exits nonzero when nothing was captured" || no "proxy rc: $rc"
+clean_tmp
+
+echo "== harness axis: denials reach the mirror's settings.json =="
+# The payload saving only happens if permissions.deny actually lands in the mirror.
+# Driven through bin/kit (not by sourcing the lib) so the whole path is exercised.
+MANI="$TMP/harness-manifest.json"
+cat > "$MANI" <<'JSON'
+{"plugins":{},"skills":[],"imports":[],"env":{},"deny":["Workflow","Monitor"]}
+JSON
+( set +e
+  source "$ROOT/lib/session-env.sh"
+  MIR="$(kog_build_mirror "$MANI" "$HC" 2>/dev/null)"
+  jq -e '.permissions.deny | index("Workflow")' "$MIR/settings.json" >/dev/null 2>&1 \
+    && ok "mirror settings.json carries the deny list" || no "deny missing: $(cat "$MIR/settings.json" 2>/dev/null)"
+  kog_cleanup "$MIR" )
+# an empty deny list must leave permissions empty (the axis is opt-in)
+cat > "$MANI" <<'JSON'
+{"plugins":{},"skills":[],"imports":[],"env":{},"deny":[]}
+JSON
+( set +e
+  source "$ROOT/lib/session-env.sh"
+  MIR="$(kog_build_mirror "$MANI" "$HC" 2>/dev/null)"
+  [[ "$(jq -r '.permissions.deny | length' "$MIR/settings.json" 2>/dev/null)" == "0" ]] \
+    && ok "empty deny list adds no permissions" || no "unexpected deny: $(cat "$MIR/settings.json" 2>/dev/null)"
+  kog_cleanup "$MIR" )
+clean_tmp
+
+echo "== doctor: rules migration hint =="
+# fixture rules live under a plain dir, so no hint; a .claude path must produce one
+out="$("$ROOT/bin/kit" doctor 2>/dev/null)"
+echo "$out" | grep -q "mirror bypass" && ok "doctor still reports mirror bypass" || no "bypass gone: $out"
+hint="$("$PY_BIN" "$ROOT/lib/leak-scan.py" --rules-root "$HC/.claude/rules" 2>/dev/null)"
+echo "$hint" | grep -q "rules_root:" && ok "migration hint printed for a .claude rules root" || no "no hint: $hint"
+hint="$("$PY_BIN" "$ROOT/lib/leak-scan.py" --rules-root "$HC/plain-rules" 2>/dev/null)"
+echo "$hint" | grep -q "rules_root:" && no "spurious hint for a clean root" || ok "no hint for a non-.claude rules root"
 clean_tmp
 
 echo "== completion helpers =="

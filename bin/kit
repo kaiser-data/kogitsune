@@ -14,6 +14,8 @@
 #   kit rm <name>        remove a saved kit
 #   kit measure <name>   launch a one-shot probe; record real ctx tokens
 #   kit measure --calibrate  record the base Claude Code floor (kit-only weights)
+#   kit measure --proxy <name>  free offline breakdown: per tool / per MCP / per system block
+#                        [--probe-model M] measure on a specific model (default haiku)
 #   kit <name> --strict  refuse to launch if any reference is unresolved
 #   kit doctor           check deps, config, auth
 #   kit help
@@ -35,6 +37,8 @@ fi
 MCP_ON_DEMAND="${KOGITSUNE_MCP_ON_DEMAND:-$HOME/.claude/mcp-on-demand.json}"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/kogitsune"
 STATE_FILE="$STATE_DIR/last-kits.json"
+# How long `measure --proxy` waits for the probe's first request (ticks × 0.2s).
+PROBE_WAIT_TICKS=300
 
 die() { echo "kit: $*" >&2; exit 1; }
 
@@ -110,6 +114,48 @@ probe_ctx() {  # $1=mirror $2=mcp.json
   echo "$out" | jq -r '((.usage.input_tokens//0)+(.usage.cache_creation_input_tokens//0)+(.usage.cache_read_input_tokens//0))'
 }
 
+# Run the same one-shot probe against a local capture proxy instead of the API, so
+# the request body (tool schemas + system prompt) lands on disk. Costs nothing and
+# needs no network — measure-proxy.py answers the probe itself.
+# The probe model is part of the measurement, not a detail: the harness exposes a
+# different tool set per model (some defer schemas), so a weight is only comparable
+# to another weight taken on the same model.
+# Echoes the capture path on success. $1=mirror $2=mcp.json $3=work dir $4=model
+probe_capture() {
+  local mirror="$1" mcp_path="$2" work="$3" model="${4:-haiku}"
+  local capture="$work/capture.json" portfile="$work/port"
+  "$PY" "$LIB/measure-proxy.py" --capture "$capture" --port-file "$portfile" &
+  local proxy_pid=$!
+  # wait for the bind (port file appears) — bounded so a dead proxy can't hang us
+  local port="" i=0
+  while [[ $i -lt 50 ]]; do
+    [[ -s "$portfile" ]] && { port="$(cat "$portfile")"; break; }
+    sleep 0.1; i=$((i + 1))
+  done
+  if [[ -z "$port" ]]; then
+    kill "$proxy_pid" 2>/dev/null || true
+    echo "kit: measure --proxy — capture proxy failed to start" >&2; return 1
+  fi
+  # The probe exists only to make the CLI build and send one request. Its reply is
+  # synthetic, so the CLI may keep the session open instead of exiting — never wait
+  # on it. Wait for the capture to land, then stop both sides.
+  ANTHROPIC_BASE_URL="http://127.0.0.1:$port" CLAUDE_CONFIG_DIR="$mirror" \
+    claude -p --output-format=json --model "$model" 'Reply with exactly: PONG' \
+    --strict-mcp-config --mcp-config "$mcp_path" >/dev/null 2>&1 &
+  local probe_pid=$!
+  i=0
+  while [[ $i -lt $PROBE_WAIT_TICKS ]]; do
+    [[ -s "$capture" ]] && break
+    kill -0 "$probe_pid" 2>/dev/null || break   # probe died before sending
+    sleep 0.2; i=$((i + 1))
+  done
+  kill "$probe_pid" "$proxy_pid" 2>/dev/null || true
+  wait "$probe_pid" 2>/dev/null || true
+  wait "$proxy_pid" 2>/dev/null || true
+  [[ -s "$capture" ]] || { echo "kit: measure --proxy — no request captured" >&2; return 1; }
+  echo "$capture"
+}
+
 pack_weight_line() {  # $1=manifest.json
   local w; w="$(jq -r '.weight' "$1")"
   ce --weights "$w"
@@ -130,6 +176,11 @@ launch_from_manifest() {
     die "internal: resolved MCP config not found (mcp_config_path='${mcp_path:-<empty>}', manifest=$manifest) — please report"
   fi
   echo "🦊 $(pack_weight_line "$manifest")" >&2
+  # the harness axis cuts below the bar's baseline, so report it as its own line
+  local hs nd
+  hs="$(jq -r '.harness_saved // 0' "$manifest")"; nd="$(jq -r '.deny | length' "$manifest")"
+  [[ "$hs" =~ ^[0-9]+$ && "$hs" -gt 0 ]] && \
+    echo "   harness: −${hs} tok (${nd} built-in tool schemas denied)" >&2
   # apply the kit/picker model, unless the user passes their own --model (which wins)
   local model user_model="" a; model="$(jq -r '.model // empty' "$manifest")"
   for a in "$@"; do [[ "$a" == "--model" || "$a" == --model=* ]] && user_model=1; done
@@ -230,8 +281,54 @@ cmd_calibrate() {
   echo "   recorded to $STATE_DIR/floor — 'kit measure' now reports kit-only weight"
 }
 
+# Break a kit's payload down per tool / per MCP server / per system block, by
+# capturing the request body a probe would have sent. Free: nothing reaches the API.
+# Use this to replace guessed catalog `weight:` hints with measured numbers.
+cmd_measure_proxy() {
+  need python3; need jq; need claude
+  # Accepts either a kit name or an ad-hoc --mcp/--skills selection. The ad-hoc form
+  # is what makes per-item weights measurable: probe the empty selection, then the
+  # same selection plus one item, and the difference is that item's real weight.
+  local probe_model="${KOGITSUNE_PROBE_MODEL:-haiku}" kit="" sel=() rest=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --probe-model) probe_model="${2:?--probe-model needs a model}"; shift 2 ;;
+      --probe-model=*) probe_model="${1#*=}"; shift ;;
+      --mcp|--skills|--model) sel+=("$1" "${2-}"); shift 2 ;;
+      --mcp=*|--skills=*|--model=*) sel+=("${1%%=*}" "${1#*=}"); shift ;;
+      -*) rest+=("$1"); shift ;;
+      *) [[ -z "$kit" ]] && kit="$1" || rest+=("$1"); shift ;;
+    esac
+  done
+  [[ -n "$kit" || ${#sel[@]} -gt 0 ]] || \
+    die "usage: kit measure --proxy <name> | --mcp a,b --skills x,y  [--probe-model M]"
+  local label="${kit:-adhoc}"
+  local manifest; manifest="$(resolve_to_manifest ${kit:+"$kit"} ${sel[@]+"${sel[@]}"})"
+  local mcp_path seldir; mcp_path="$(jq -r '.mcp_config_path' "$manifest")"
+  seldir="$(dirname "$manifest")"
+  echo "kit: capturing '$label' payload via local proxy on '$probe_model' (no API call)…" >&2
+  local mirror work; mirror="$(kog_build_mirror "$manifest")"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/kogitsune-probe.XXXXXX")"
+  trap 'kog_cleanup "$mirror"; kog_cleanup "$seldir"; rm -rf "$work"' EXIT INT TERM
+  local capture; capture="$(probe_capture "$mirror" "$mcp_path" "$work" "$probe_model")" || {
+    kog_cleanup "$mirror"; kog_cleanup "$seldir"; rm -rf "$work"; trap - EXIT INT TERM
+    echo "   ANTHROPIC_BASE_URL may be unsupported by this Claude Code build;" >&2
+    echo "   plain 'kit measure $label' still reports the real total." >&2
+    return 1
+  }
+  # keep the attribution around so weights can be compared across runs; the probe
+  # model is part of the key, since tool sets differ per model.
+  mkdir -p "$STATE_DIR/attribution"
+  local dest="$STATE_DIR/attribution/$label.$probe_model.json"
+  "$PY" "$LIB/tool-report.py" "$capture" --json > "$dest" 2>/dev/null || true
+  "$PY" "$LIB/tool-report.py" "$capture" ${rest[@]+"${rest[@]}"}
+  kog_cleanup "$mirror"; kog_cleanup "$seldir"; rm -rf "$work"; trap - EXIT INT TERM
+  echo "   recorded to $dest" >&2   # stderr: stdout may be piped JSON (--json)
+}
+
 cmd_measure() {  # launch a one-shot probe under the kit's mirror, record real ctx tokens
   if [[ "${1:-}" == "--calibrate" ]]; then cmd_calibrate; return; fi
+  if [[ "${1:-}" == "--proxy" ]]; then shift; cmd_measure_proxy "$@"; return; fi
   need python3; need jq; need claude
   local kit="${1:?usage: kit measure <name> | kit measure --calibrate}"
   local manifest; manifest="$(resolve_to_manifest "$kit")"
@@ -347,6 +444,16 @@ cmd_doctor() {
   local floor; floor="$(floor_val)"
   if [[ -n "$floor" ]]; then echo "  ✔ base floor: ~${floor} tok (calibrated; measured weights are kit-only)";
   else echo "  • base floor: not calibrated — run 'kit measure --calibrate' for kit-only weights"; fi
+  # Gating is only as good as what the mirror can reach. Ancestor CLAUDE.md/rules load
+  # from the working directory, not the config dir, so no kit can exclude them.
+  echo "  mirror bypass (context loaded from cwd's ancestors):"
+  if [[ -n "$PY" ]]; then
+    local rr leak
+    rr="$(bc --list 2>/dev/null | jq -r '.rules_root // empty' 2>/dev/null || true)"
+    leak="$("$PY" "$LIB/leak-scan.py" ${rr:+--rules-root "$rr"} 2>/dev/null || true)"
+    if [[ -z "$leak" ]]; then echo "    • could not scan"
+    else printf '%s\n' "$leak" | sed 's/^/    /'; fi
+  else echo "    • needs python3"; fi
 }
 
 # ---- pack tuning (state-file driven picker) --------------------------------

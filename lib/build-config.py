@@ -38,9 +38,24 @@ def skills_root() -> str:
     return expand(os.environ.get("KOGITSUNE_SKILLS_DIR", "~/.claude/skills"))
 
 
-def rules_root() -> str:
-    """User-rules directory; overridable via env for tests / alternate roots."""
-    return expand(os.environ.get("KOGITSUNE_RULES_DIR", "~/.claude/rules"))
+DEFAULT_RULES_ROOT = "~/.claude/rules"
+
+
+def rules_root(config: dict | None = None) -> str:
+    """User-rules directory. Precedence: config `rules_root:` > env > default.
+
+    Config beats env so a committed kits.yaml is portable: a teammate who clones it
+    resolves the same paths without setting anything in their shell. The env var
+    remains for tests and CI, which need to redirect the root per-process.
+
+    Packs kept under a `.claude` dir are auto-loaded from the working directory's
+    ancestors and reach every session regardless of the mirror — so this key exists to
+    point at a root *outside* `.claude`. See lib/leak-scan.py.
+    """
+    configured = (config or {}).get("rules_root")
+    if configured:
+        return expand(str(configured))
+    return expand(os.environ.get("KOGITSUNE_RULES_DIR", DEFAULT_RULES_ROOT))
 
 
 def load_yaml(path: str) -> dict:
@@ -84,10 +99,47 @@ def _apply_delta(names: list[str], entries: list[str]) -> list[str]:
     return out
 
 
-def resolve_kit(name: str, kits: dict, _seen: tuple = ()) -> dict:
-    """Return {'mcp': [...], 'skills': [...], 'model': str|None} for a kit.
+# Tools a kit may never deny. Denials land in settings.json, which is read once at
+# startup — so unlike a missing skill (recoverable with `repack`), a wrongly denied tool
+# costs a full restart. These are the ones whose absence would break the session itself.
+ESSENTIAL_TOOLS = frozenset({
+    "Bash", "Read", "Edit", "Write", "Skill", "ToolSearch",
+    "AskUserQuestion", "TaskOutput", "TaskStop",
+})
 
-    `model` is inherited from `extends` unless the kit sets its own.
+
+def harness_deny(harness: dict, keep: list[str] | None,
+                 warnings: list[str]) -> tuple[list[str], int]:
+    """Tools to strip, and the tokens that saves. Pure.
+
+    `keep` is an allowlist of optional groups; every group not named is denied.
+    `None` means the kit said nothing about the harness — deny nothing, so existing
+    kits are unaffected.
+    """
+    if keep is None:
+        return [], 0
+    known = set(harness)
+    for g in keep:
+        if g not in known:
+            warnings.append(
+                f"unknown harness group '{g}'{_suggest(g, sorted(known))}")
+    kept = set(keep) & known
+    deny: set[str] = set()
+    saved = 0
+    for group, spec in harness.items():
+        if group in kept:
+            continue
+        tools = [t for t in (spec or {}).get("tools", [])
+                 if t not in ESSENTIAL_TOOLS]
+        deny.update(tools)
+        saved += int((spec or {}).get("weight", 0) or 0)
+    return sorted(deny), saved
+
+
+def resolve_kit(name: str, kits: dict, _seen: tuple = ()) -> dict:
+    """Return {'mcp': [...], 'skills': [...], 'model': str|None, 'harness': list|None}.
+
+    `model` and `harness` are inherited from `extends` unless the kit sets its own.
     """
     if name not in kits:
         close = difflib.get_close_matches(name, list(kits), n=1)
@@ -99,13 +151,16 @@ def resolve_kit(name: str, kits: dict, _seen: tuple = ()) -> dict:
     base_mcp: list[str] = []
     base_skills: list[str] = []
     base_model: str | None = None
+    base_harness: list[str] | None = None
     if spec.get("extends"):
         base = resolve_kit(spec["extends"], kits, _seen + (name,))
         base_mcp, base_skills, base_model = base["mcp"], base["skills"], base["model"]
+        base_harness = base["harness"]
     return {
         "mcp": _apply_delta(base_mcp, spec.get("mcp", [])),
         "skills": _apply_delta(base_skills, spec.get("skills", [])),
         "model": spec.get("model", base_model),
+        "harness": spec.get("harness", base_harness),
     }
 
 
@@ -116,7 +171,8 @@ def _suggest(name: str, options: list[str]) -> str:
     return f" (did you mean '{close[0]}'?)" if close else ""
 
 
-def resolve_item(name: str, spec: dict, mcp_servers: dict, warnings: list[str]) -> dict:
+def resolve_item(name: str, spec: dict, mcp_servers: dict, warnings: list[str],
+                 rules_base: str | None = None) -> dict:
     """Resolve one catalog/pinned item into a manifest entry by its kind."""
     spec = spec or {}
     kind = kind_of(spec)
@@ -164,7 +220,8 @@ def resolve_item(name: str, spec: dict, mcp_servers: dict, warnings: list[str]) 
         # The mirror EXCLUDES the auto-loaded rules/ dir, so selected packs ride in
         # as explicit session-CLAUDE.md imports — loaded when chosen, absent otherwise.
         pat = spec["rules"]
-        base = expand(pat) if pat.startswith(("/", "~", "$")) else os.path.join(rules_root(), pat)
+        base = (expand(pat) if pat.startswith(("/", "~", "$"))
+                else os.path.join(rules_base or rules_root(), pat))
         entry["paths"] = sorted(glob.glob(os.path.join(base, "*.md")))
         if not entry["paths"]:
             warnings.append(f"rules pack '{name}' -> no *.md files under {base}")
@@ -177,7 +234,8 @@ def resolve_item(name: str, spec: dict, mcp_servers: dict, warnings: list[str]) 
 
 def build(config: dict, mcp_servers: dict, *, kit: str | None,
           mcp_sel: list[str] | None, skills_sel: list[str] | None,
-          model: str | None = None) -> dict:
+          model: str | None = None,
+          harness_sel: list[str] | None = None) -> dict:
     """Resolve a selection into a full manifest. Pure.
 
     `model` overrides any kit-declared model (used by the picker's live override);
@@ -189,12 +247,15 @@ def build(config: dict, mcp_servers: dict, *, kit: str | None,
     cat_skills = catalog.get("skills", {}) or {}
     kits = config.get("kits", {}) or {}
     pinned = config.get("pinned", {}) or {}
+    rules_base = rules_root(config)
 
     kit_model: str | None = None
     if kit is not None:
         sel = resolve_kit(kit, kits)
         mcp_sel, skills_sel = sel["mcp"], sel["skills"]
         kit_model = sel["model"]
+        if harness_sel is None:
+            harness_sel = sel["harness"]
     mcp_sel = mcp_sel or []
     skills_sel = skills_sel or []
     resolved_model = model or kit_model or config.get("model")
@@ -213,17 +274,18 @@ def build(config: dict, mcp_servers: dict, *, kit: str | None,
     # pinned items always ride along
     pinned_entries = []
     for name, spec in pinned.items():
-        e = resolve_item(name, spec, mcp_servers, warnings)
+        e = resolve_item(name, spec, mcp_servers, warnings, rules_base)
         pinned_entries.append(e)
         _fold(e, plugins, skill_srcs, imports, env, plugin_mcp_exclude)
 
     # selected catalog items
     for n in mcp_sel:
-        e = resolve_item(n, {"mcp": n, **(cat_mcp.get(n) or {})}, mcp_servers, warnings)
+        e = resolve_item(n, {"mcp": n, **(cat_mcp.get(n) or {})}, mcp_servers,
+                         warnings, rules_base)
         items.append(e)
         _fold(e, plugins, skill_srcs, imports, env, plugin_mcp_exclude)
     for n in skills_sel:
-        e = resolve_item(n, cat_skills.get(n) or {}, mcp_servers, warnings)
+        e = resolve_item(n, cat_skills.get(n) or {}, mcp_servers, warnings, rules_base)
         items.append(e)
         _fold(e, plugins, skill_srcs, imports, env, plugin_mcp_exclude)
 
@@ -234,8 +296,12 @@ def build(config: dict, mcp_servers: dict, *, kit: str | None,
             mcp_config["mcpServers"][e["name"]] = e["server"]
 
     weight = sum(int(e.get("weight", 0) or 0) for e in items)
+    deny, harness_saved = harness_deny(
+        config.get("harness", {}) or {}, harness_sel, warnings)
     return {
         "kit": kit,
+        "deny": deny,
+        "harness_saved": harness_saved,
         "model": resolved_model,
         "pinned": pinned_entries,
         "items": items,
@@ -393,7 +459,8 @@ def main(argv=None) -> int:
                    "kit_info": kit_info,
                    "mcp": cat.get("mcp", {}) or {},
                    "skills": cat.get("skills", {}) or {},
-                   "pinned": list((config.get("pinned", {}) or {}).keys())},
+                   "pinned": list((config.get("pinned", {}) or {}).keys()),
+                   "rules_root": rules_root(config)},
                   sys.stdout, indent=2)
         sys.stdout.write("\n")
         return 0

@@ -6,11 +6,45 @@
 # repack is pinned deliberately: it is the escape hatch for a wrong pack, so it has to
 # be present *before* you know you need it. A catalog entry cannot do that — acquiring
 # it would cost the restart that repack exists to avoid.
+# Where rules packs live. Set this to a directory that is NOT inside any `.claude`
+# dir: the harness auto-loads `<ancestor>/.claude/rules/**` from the working
+# directory's ancestors, so packs kept under ~/.claude/rules reach every session and
+# no kit can gate them. `kit doctor` detects this and prints the move.
+# Precedence: this key > $KOGITSUNE_RULES_DIR > ~/.claude/rules
+rules_root: "~/.claude-rules"
+
 pinned:
   memory:     { plugin: "claude-mem@thedotmack" }
   guardrails: { import: "~/.claude/rules/guardrails.md" }
   graphify:   { skill: "graphify" }
   repack:     { skill: "repack" }
+
+# Built-in harness tools — the largest block in any session (~27.6K measured 2026-08-09),
+# and until now the one axis no kit could touch. A `permissions.deny` entry with a bare
+# tool name strips that tool's schema from the request payload, so denying what a kit
+# will never call is a real saving, not just a guardrail.
+#
+# A kit opts in with `harness: [group, ...]` — an ALLOWLIST: groups named are kept,
+# every other group is denied. Omit the key entirely and nothing is denied, so kits
+# written before this axis existed are unaffected.
+#
+# Asymmetry worth respecting: settings.json is read once at startup, so a wrongly denied
+# tool cannot be recovered by `repack` the way a missing skill can — it needs a full
+# restart. Deny groups a kit is *certain* not to need; when unsure, keep them.
+# Essentials (Bash/Read/Edit/Write/Skill/ToolSearch/AskUserQuestion/TaskOutput/TaskStop)
+# are never deniable, whatever a group lists.
+harness:
+  agents:    { weight: 8653, tools: [Workflow, Agent, SendMessage, ListAgents] }
+  tasks:     { weight: 2173, tools: [TaskCreate, TaskUpdate, TaskList, TaskGet] }
+  design:    { weight: 2331, tools: [DesignSync] }
+  watch:     { weight: 1915, tools: [Monitor] }
+  cron:      { weight: 2062, tools: [CronCreate, CronDelete, CronList, ScheduleWakeup] }
+  worktrees: { weight: 1653, tools: [EnterWorktree, ExitWorktree] }
+  web:       { weight:  950, tools: [WebSearch, WebFetch] }
+  remote:    { weight:  916, tools: [RemoteTrigger, PushNotification] }
+  review:    { weight:  571, tools: [ReportFindings] }
+  mcp-res:   { weight:  537, tools: [ReadMcpResourceDirTool, ListMcpResourcesTool, ReadMcpResourceTool] }
+  notebooks: { weight:  420, tools: [NotebookEdit] }
 
 # Catalog of selectable items, with rough context-weight hints (tokens) for the pack-weight bar.
 catalog:
@@ -53,7 +87,7 @@ catalog:
 kits:
   # kitsune rides in lean + ecc (deep/qa inherit): a small always-on gateway buys
   # on-demand access to any registry MCP (search → shapeshift → call)
-  lean:     { mcp: [kitsune],          skills: [] }
+  lean:     { mcp: [kitsune],          skills: [] , harness: [web] }
   db:       { model: opus, mcp: [supabase], skills: [postgres-bp] }
   db-heavy: { extends: db, mcp: ["+context7"] }      # inherit db (incl. model: opus), add a server
   n8n:      { mcp: [n8n-mcp],          skills: [n8n] }

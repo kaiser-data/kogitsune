@@ -54,9 +54,15 @@ kog_build_mirror() {
   # 3. settings.json with enabledPlugins replaced by the manifest's set + env merged
   local base_settings="$rc/settings.json"
   [[ -f "$base_settings" ]] || base_settings=<(echo '{}')
+  # permissions.deny with a bare tool name strips that tool's schema from the request
+  # payload (it does not merely block the call), which is the only lever that reaches
+  # the built-in tools — the largest block in a session. Appended to any existing deny
+  # rules rather than replacing them, so the user's own permissions survive.
   jq --slurpfile m "$manifest" '
       .enabledPlugins = ($m[0].plugins)
     | .env = ((.env // {}) + ($m[0].env // {}))
+    | .permissions = ((.permissions // {})
+        | .deny = (((.deny // []) + ($m[0].deny // [])) | unique))
   ' "$base_settings" > "$mirror/settings.json"
 
   # 4. session CLAUDE.md = the pinned guardrails imports (lean; not the full global one)

@@ -31,6 +31,21 @@ def packdiff():
     return _load("packdiff", "pack-diff.py")
 
 
+@pytest.fixture(scope="session")
+def toolreport():
+    return _load("toolreport", "tool-report.py")
+
+
+@pytest.fixture(scope="session")
+def measureproxy():
+    return _load("measureproxy", "measure-proxy.py")
+
+
+@pytest.fixture(scope="session")
+def leakscan():
+    return _load("leakscan", "leak-scan.py")
+
+
 @pytest.fixture(autouse=True)
 def _fixture_roots(monkeypatch):
     monkeypatch.setenv("KOGITSUNE_SKILLS_DIR", str(FIXTURES / "skills"))

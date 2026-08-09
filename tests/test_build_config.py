@@ -6,7 +6,9 @@ import pytest
 
 def test_resolve_kit_basic(buildcfg, config):
     sel = buildcfg.resolve_kit("db", config["kits"])
-    assert sel == {"mcp": ["supabase"], "skills": ["postgres-bp"], "model": "opus"}
+    # harness is None for a kit that declares none — the axis is opt-in
+    assert sel == {"mcp": ["supabase"], "skills": ["postgres-bp"], "model": "opus",
+                   "harness": None}
 
 
 def test_resolve_kit_extends_add(buildcfg, config):

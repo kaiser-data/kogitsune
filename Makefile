@@ -1,6 +1,6 @@
 # kogitsune 🦊 — dev tasks
 SHELL := bash
-SCRIPTS := bin/kit lib/session-env.sh install.sh lib/install-superpowers.sh tests/test_launcher.sh completions/kit.bash skills/lib/decider.sh tests/test_decider.sh
+SCRIPTS := bin/kit lib/session-env.sh install.sh lib/install-superpowers.sh lib/weight-sweep.sh tests/test_launcher.sh completions/kit.bash skills/lib/decider.sh tests/test_decider.sh
 
 .PHONY: check test pytest launcher decider lint help superpowers superpowers-plugin superpowers-skills
 help:

@@ -191,12 +191,12 @@ pinned:                                   # always on, never a toggle
 
 catalog:
   mcp:
-    supabase: { weight: 10000, tag: "🔴" }      # resolved from mcp-on-demand.json
+    supabase: { weight: 3300, tag: "🔴" }       # resolved from mcp-on-demand.json
     context7: { weight: 1000,  tag: "🟢" }
   skills:
     postgres-bp: { plugin: "postgres-best-practices@supabase-agent-skills", weight: 2000, tag: "🟡" }
     n8n:         { dir: "n8n-*", count: 7, weight: 4000, tag: "🟡" }
-    ecc:         { plugin: "ecc@ecc", weight: 4200, gate_mcp: true }   # see below
+    ecc:         { plugin: "ecc@ecc", weight: 6400, gate_mcp: true }   # see below
     ecc-rules:   { rules: "ecc/common", weight: 4100 }  # rules pack -> session CLAUDE.md imports
 
 kits:
@@ -209,10 +209,64 @@ A kit's optional **`model:`** (`opus` · `sonnet` · `haiku`, or a full model id
 model. It's inherited via `extends`, overridable live in the picker with **ctrl-o**, and always
 beaten by an explicit `kit db -- --model <x>`. Omit it to use Claude Code's default.
 
+### The harness axis — the built-in tools
+
+Skills and MCP were only ever part of the bill. The **built-in tools** (`Workflow`, `Agent`,
+`Monitor`, `DesignSync`, `Cron*`, …) are the largest single block in a session, and no kit
+could touch them. A `permissions.deny` entry naming a bare tool **strips that tool's schema
+from the request payload** — it doesn't merely block the call — so a kit can now decline what
+it will never use:
+
+```yaml
+harness:                                  # groups, sized from real measurements
+  agents:    { weight: 8653, tools: [Workflow, Agent, SendMessage, ListAgents] }
+  cron:      { weight: 2062, tools: [CronCreate, CronDelete, CronList, ScheduleWakeup] }
+  web:       { weight:  950, tools: [WebSearch, WebFetch] }
+  # … design · watch · tasks · worktrees · remote · review · mcp-res · notebooks
+
+kits:
+  lean:  { mcp: [kitsune], skills: [], harness: [web] }      # allowlist: keep web, deny the rest
+  build: { extends: ecc, harness: [agents, tasks, web, review, worktrees] }
+```
+
+`harness:` is an **allowlist** — groups you name are kept, every other group is denied. Omit
+the key and nothing is denied, so kits written before this axis are unaffected. Measured on
+`lean`: **41 tools → 19, ~42.6K → ~22.1K tokens per session.**
+
+Two guards, because this axis is *not* symmetric with the others: `settings.json` is read once
+at startup, so unlike a missing skill (recoverable with `repack`) a wrongly denied tool needs a
+full restart.
+
+- **Essentials are never deniable** — `Bash`, `Read`, `Edit`, `Write`, `Skill`, `ToolSearch`,
+  `AskUserQuestion`, `TaskOutput`, `TaskStop` survive whatever a group lists.
+- **Unknown group names warn** rather than silently denying more than you meant.
+
+Deny groups a kit is *certain* not to need; when unsure, keep them.
+
+### Measuring instead of guessing
+
+Weights used to be hand-entered estimates. `kit measure --proxy` points the launcher at a
+local capture proxy that **answers the probe itself** — no request reaches the API — and breaks
+the captured payload down per tool, per MCP server, and per system/message block:
+
+```bash
+kit measure --proxy lean            # attribution for one kit (free, offline)
+kit measure --proxy lean --probe-model opus
+lib/weight-sweep.sh                 # every catalog item's marginal weight
+```
+
+The first sweep found declared weights off by 3–17× in both directions. See
+[`docs/FINDINGS-2026-08-09-payload-attribution.md`](docs/FINDINGS-2026-08-09-payload-attribution.md)
+for the numbers and the fidelity limits — the probe is a `-p` one-shot and differs from an
+interactive session, so treat the figures as comparable-to-each-other, not as billing.
+
 Two gating features close context leaks the harness would otherwise open:
 
 - **`rules` packs** — the harness auto-loads `<config>/rules/**` into every session, so the
   mirror excludes `rules/` and selected packs ride in as explicit session-CLAUDE.md imports.
+  It *also* walks up from the working directory and loads `<ancestor>/.claude/rules/**`,
+  which no mirror can reach — so keep packs outside any `.claude` dir and point
+  **`rules_root:`** at them. `kit doctor` detects the un-migrated case and prints the move.
 - **`gate_mcp: true`** on a plugin — plugin-bundled MCP servers (the plugin's `.mcp.json`)
   bypass `--strict-mcp-config`; gating mirrors the plugin per-entry without its `.mcp.json`,
   so its skills/commands/hooks load but its MCP servers never spawn. Re-expose the server as
@@ -347,6 +401,39 @@ make lint      # shellcheck the shell scripts
   **session mirror is always deleted on exit** (no credential leak).
 - **CI** runs the suite on Linux *and* macOS; the macOS job runs **bash 3.2**, guarding the
   portability floor.
+
+## Credits
+
+The **harness axis** and `kit measure --proxy` came out of
+[**Matt Pocock**](https://www.aihero.dev)'s article
+[*How to kill the bloat in Claude Code's system prompt*](https://www.aihero.dev/how-to-kill-the-bloat-in-claude-codes-system-prompt)
+(aihero.dev). Two ideas of theirs are load-bearing here:
+
+1. **Point Claude Code at a local proxy and read the request body.** Tool schemas and the
+   system prompt are assembled client-side, so the request is the only place the real cost is
+   visible. Their run: *69 tools · 154,946 tool bytes · 65,538 input tokens*.
+2. **`permissions.deny` with a bare tool name strips the tool from the payload** rather than
+   just blocking the call — the mechanism the whole harness axis rests on.
+
+What we changed:
+
+- **The proxy doesn't forward.** Theirs is a logging proxy in front of the real API. Ours
+  (`lib/measure-proxy.py`) answers the probe with a synthetic reply and never calls upstream,
+  so a full catalog sweep is free, offline, and impossible to bill.
+- **Per-kit, not per-user.** They tune one global `settings.json`. kogitsune already builds a
+  throwaway `settings.json` per session, so denials became a kit property — `lean` can be
+  ruthless while `build` keeps its agents, in the same install.
+- **Allowlist with an essentials floor.** Rather than adopting their deny list, groups are
+  declared and kits keep what they name; `ESSENTIAL_TOOLS` can never be denied, because a
+  denial costs a restart to undo.
+- **We measured our own numbers instead of reusing theirs.** Per-tool sizes came out close
+  (`Workflow` ~5.3K vs our 5,466), but the conclusion differed: in an interactive Opus session
+  most schemas are deferred and denying them buys ~nothing, while in a kit's `-p` probe 41 load
+  eagerly. Which tools are worth denying is install- and model-specific — hence the sweep.
+
+We did **not** adopt their `disable*` flags (`disableBundledSkills`, `disableWorkflows`, …).
+They're plausible and may well work, but we haven't verified them against this Claude Code
+build, and an unverified key doesn't belong in a `kits.yaml` contract.
 
 ## Family
 
