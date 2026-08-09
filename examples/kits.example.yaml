@@ -88,17 +88,17 @@ kits:
   # kitsune rides in lean + ecc (deep/qa inherit): a small always-on gateway buys
   # on-demand access to any registry MCP (search → shapeshift → call)
   lean:     { mcp: [kitsune],          skills: [] , harness: [web] }
-  db:       { model: opus, mcp: [supabase], skills: [postgres-bp] }
+  db:       { model: opus, mcp: [supabase], skills: [postgres-bp], harness: [web] }
   db-heavy: { extends: db, mcp: ["+context7"] }      # inherit db (incl. model: opus), add a server
-  n8n:      { mcp: [n8n-mcp],          skills: [n8n] }
-  frontend: { model: sonnet, mcp: [], skills: [frontend-design] }
-  research: { mcp: [notion, context7], skills: [] }
-  ecc:      { mcp: [kitsune],          skills: [ecc, ecc-rules-common] }  # full ECC harness + its core rules
+  n8n:      { mcp: [n8n-mcp],          skills: [n8n], harness: [web] }
+  frontend: { model: sonnet, mcp: [], skills: [frontend-design], harness: [web, design] }
+  research: { mcp: [notion, context7], skills: [], harness: [web] }
+  ecc:      { mcp: [kitsune],          skills: [ecc, ecc-rules-common], harness: [agents, tasks, web, review] }  # full ECC harness + its core rules
   deep:     { extends: ecc, mcp: ["+context7"] }                 # ECC + docs lookup for heavy builds
-  qa:       { extends: ecc, mcp: ["+chrome-devtools"] }          # ECC + interactive DevTools (traces, heap, console)
+  qa:       { extends: ecc, mcp: ["+chrome-devtools"], harness: [agents, tasks, web, review, watch] }          # ECC + interactive DevTools (traces, heap, console)
 
   # --- best-of-both: superpowers process layer × ECC capability layer ---
   # `kit for "<task>"` picks among these from learned experience; see the README.
-  flow:     { mcp: [kitsune], skills: [sp] }                     # lean process discipline (à la carte, no hook), no ECC
+  flow:     { mcp: [kitsune], skills: [sp], harness: [agents, tasks, web, review, worktrees] }                     # lean process discipline (à la carte, no hook), no ECC
   build:    { extends: ecc, model: opus, skills: ["+superpowers"] }  # ⭐ full ECC harness + superpowers methodology (plugin+hook)
-  feature:  { model: opus, mcp: [kitsune], skills: [sp, ecc-rules-ts] }  # focused: process + one language's rules, no full ECC
+  feature:  { model: opus, mcp: [kitsune], skills: [sp, ecc-rules-ts], harness: [agents, tasks, web, review, worktrees] }  # focused: process + one language's rules, no full ECC
