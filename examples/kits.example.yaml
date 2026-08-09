@@ -70,6 +70,10 @@ catalog:
     postgres-bp:      { plugin: "postgres-best-practices@supabase-agent-skills", weight: 2000, tag: "🟡" }
     n8n:              { dir: "~/.claude/skills/n8n-*", count: 7, weight: 4000, tag: "🟡" }
     frontend-design:  { plugin: "frontend-design@claude-plugins-official", weight: 1000, tag: "🟢" }
+    # ponytail (DietrichGebert/ponytail): pushes the agent toward the smallest change.
+    # Ships always-on Node lifecycle hooks, so unlike a defer-until-invoked skill this is
+    # a standing cost — measured 2026-08-09 at ~1,450 tok, all of it hook output.
+    ponytail:         { plugin: "ponytail@ponytail", weight: 1450, tag: "🟢" }
     # --- process layer: superpowers (obra/superpowers) — the HOW of working.
     # Complements ECC (the WHAT): superpowers choreographs plan→TDD→review→verify→finish;
     # ECC supplies the domain steps. Precedence on overlap: guardrails > superpowers > ECC.
