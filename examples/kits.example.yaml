@@ -104,5 +104,5 @@ kits:
   # --- best-of-both: superpowers process layer × ECC capability layer ---
   # `kit for "<task>"` picks among these from learned experience; see the README.
   flow:     { mcp: [kitsune], skills: [sp], harness: [agents, tasks, web, review, worktrees] }                     # lean process discipline (à la carte, no hook), no ECC
-  build:    { extends: ecc, model: opus, skills: ["+superpowers"] }  # ⭐ full ECC harness + superpowers methodology (plugin+hook)
-  feature:  { model: opus, mcp: [kitsune], skills: [sp, ecc-rules-ts], harness: [agents, tasks, web, review, worktrees] }  # focused: process + one language's rules, no full ECC
+  build:    { extends: ecc, model: opus, skills: ["+superpowers", "+ponytail"] }  # ⭐ full ECC harness + superpowers methodology (plugin+hook)
+  feature:  { model: opus, mcp: [kitsune], skills: [sp, ecc-rules-ts, ponytail], harness: [agents, tasks, web, review, worktrees] }  # focused: process + one language's rules, no full ECC
