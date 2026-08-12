@@ -305,12 +305,40 @@ make superpowers-plugin   # Mode A: marketplace add + plugin install (has the ho
 make superpowers-skills   # Mode B: git clone into ~/.claude/_vendor (à la carte, no hook)
 ```
 
+### A third axis: restraint (ponytail)
+
+`superpowers` decides *how* the work is sequenced, ECC supplies the *domain step* — neither one
+argues about **how much** to build. [`ponytail`](https://github.com/DietrichGebert/ponytail) does:
+it's a "lazy senior dev" nudge toward YAGNI, stdlib first, and no unrequested abstractions.
+
+```bash
+make ponytail   # marketplace add + plugin install, then disable it globally (kit-only)
+```
+
+It is **not** a defer-until-invoked skill. ponytail ships three always-on Node lifecycle hooks —
+`SessionStart`, `SubagentStart`, `UserPromptSubmit` — so its instructions land in every session
+*and* in every subagent whenever the plugin is enabled. Measured 2026-08-09 at **~1,450 tok**, all
+of it hook output. That makes it the same cost shape as superpowers Mode A, and the same trap:
+
+> **Enabled globally, a hook-bearing plugin taxes every session — including the ones the
+> catalog toggle claims are lean.** Kit sessions override `enabledPlugins` with the kit's own
+> plugin set, so the fix is to leave it `false` globally and list it in the kits that want it.
+> `make ponytail` does both. A catalog entry that no kit references is dead weight you still pay.
+
+So ponytail rides in the kits where a smallest-diff bias is actually wanted, and nowhere else:
+
+| Kit | Restraint | Why |
+|---|---|---|
+| `build` | ✅ ponytail | full ECC + superpowers — the pack most likely to over-engineer |
+| `feature` | ✅ ponytail | focused change on an existing codebase |
+| `flow`, `lean`, `ecc`, `qa`, … | — | exploratory or read-heavy; the nudge isn't worth 1.45K |
+
 The best-of-both kits:
 
 ```yaml
 flow:    { mcp: [kitsune], skills: [sp] }                    # lean process discipline, no ECC
-build:   { extends: ecc, model: opus, skills: ["+superpowers"] }  # ⭐ ECC capability + methodology
-feature: { model: opus, mcp: [kitsune], skills: [sp, ecc-rules-ts] }  # process + one language
+build:   { extends: ecc, model: opus, skills: ["+superpowers", "+ponytail"] }  # ⭐ ECC + methodology + restraint
+feature: { model: opus, mcp: [kitsune], skills: [sp, ecc-rules-ts, ponytail] } # process + one language + restraint
 ```
 
 ### From a task to a kit: `kit for`
