@@ -10,7 +10,7 @@ _kit() {
   if [[ ${COMP_WORDS[1]:-} == codex && ${COMP_CWORD} -ge 2 ]]; then
     kits="$(kit codex __kits 2>/dev/null)"
     # shellcheck disable=SC2207
-    COMPREPLY=( $(compgen -W "${kits} ls show tune save help --dry-run --" -- "${cur}") )
+    COMPREPLY=( $(compgen -W "${kits} ls show audit tune save help --dry-run --json --" -- "${cur}") )
     return
   fi
 

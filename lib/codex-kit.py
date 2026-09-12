@@ -26,7 +26,16 @@ def load_module(name, filename):
 bc = load_module("kogitsune_build", "build-config.py")
 rpc = load_module("kogitsune_rpc", "codex-rpc.py")
 RETAINED_SCOPES = {"system", "admin", "repo"}
-RESERVED = {"ls", "list", "show", "save", "tune", "pick", "help", "__kits"}
+RESERVED = {"ls", "list", "show", "audit", "save", "tune", "pick", "help", "__kits"}
+
+
+class ArgumentParser(argparse.ArgumentParser):
+    redact_errors = False
+
+    def error(self, message):
+        if self.redact_errors:
+            raise ValueError("invalid audit options; see 'kit codex help'")
+        super().error(message)
 
 
 def string_list(value, label):
@@ -124,9 +133,10 @@ def toml_value(value):
     raise ValueError(f"unsupported value in Codex skill settings: {type(value).__name__}")
 
 
-def launch_context(arguments, model):
+def launch_context(arguments, model, *, redact_errors=False):
     """Normalize discovery-affecting options and launch in the exact same cwd."""
-    parser = argparse.ArgumentParser(prog="kit codex <kit> --", allow_abbrev=False)
+    parser = ArgumentParser(prog="kit codex <kit> --", allow_abbrev=False)
+    parser.redact_errors = redact_errors
     parser.add_argument("-C", "--cd")
     parser.add_argument("-p", "--profile")
     parser.add_argument("-m", "--model")
@@ -246,6 +256,7 @@ HELP = """kit codex — choose skills before starting a Codex CLI session
   kit codex tune <name>              tune a preset (ctrl-s saves it as a new kit)
   kit codex ls                       list presets and discovered skills
   kit codex show <name>              print a verified selection as JSON
+  kit codex audit <name> [--json]     report skills, integrations, access and credential sources
   kit codex <name> --dry-run          print selection and argv; no model turn
   kit codex save <name> --skills a,b  save a kit; optional --model ID
   kit codex <name> -- CODEX_ARGS      forward interactive options and one prompt
@@ -274,17 +285,20 @@ def main(argv=None):
     if "--" in arguments:
         index = arguments.index("--")
         before, forwarded = arguments[:index], arguments[index + 1:]
-    parser = argparse.ArgumentParser(prog="kit codex", allow_abbrev=False)
+    audit_mode = "audit" in before
+    parser = ArgumentParser(prog="kit codex", allow_abbrev=False)
+    parser.redact_errors = audit_mode
     parser.add_argument("command", nargs="?", default="pick")
     parser.add_argument("name", nargs="?")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--json", action="store_true")
     parser.add_argument("--skills")
     parser.add_argument("--model")
     ns = parser.parse_args(before)
     command = ns.command
     if command not in RESERVED and ns.name:
         raise ValueError("put Codex arguments after -- (see 'kit codex help')")
-    if command in {"show", "tune", "save"} and not ns.name:
+    if command in {"show", "audit", "tune", "save"} and not ns.name:
         raise ValueError(f"kit codex {command} requires a kit name")
     if command in {"ls", "list", "pick", "__kits"} and ns.name:
         raise ValueError(f"kit codex {command} does not take a kit name")
@@ -292,7 +306,9 @@ def main(argv=None):
         raise ValueError("save does not accept --dry-run or forwarded Codex options")
     if command != "save" and (ns.skills is not None or ns.model is not None):
         raise ValueError("--skills/--model before -- are save options; forward Codex options after --")
-    cwd, overrides, extra = launch_context(forwarded, None)
+    if ns.json and command != "audit":
+        raise ValueError("--json is an audit option; show and --dry-run already return JSON")
+    cwd, overrides, extra = launch_context(forwarded, None, redact_errors=audit_mode)
     section, save_path = load_config(path, cwd)
     if command == "__kits":
         print("\n".join(sorted(section["kits"])))
@@ -309,7 +325,7 @@ def main(argv=None):
             state = "on" if s["enabled"] else "off"
             print(f"{selector}\t{state}\t{s['scope']}\t{s.get('description', '').replace(chr(10), ' ')}")
         return 0
-    name = ns.name if command in {"show", "tune", "save"} else command
+    name = ns.name if command in {"show", "audit", "tune", "save"} else command
     if command == "save":
         if ns.skills is None:
             raise ValueError("save requires --skills (use --skills '' for an empty kit)")
@@ -350,6 +366,12 @@ def main(argv=None):
     manifest = dict(selection, kit=name, cwd=cwd, verified=True,
                     selected_count=len(selection["selected"]), excluded_count=len(selection["excluded"]),
                     argv=argv)
+    if command == "audit":
+        audit = load_module("kogitsune_codex_audit", "codex-audit.py")
+        snapshot = rpc.inspect_runtime(executable, cwd, overrides)
+        report = audit.build_report(manifest, snapshot, extra)
+        print(json.dumps(report, indent=2, ensure_ascii=False) if ns.json else audit.render(report))
+        return 0
     if ns.dry_run or command == "show":
         print(json.dumps(manifest, indent=2, ensure_ascii=False))
         return 0
@@ -369,7 +391,10 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except (ValueError, KeyError, OSError, yaml.YAMLError, rpc.CodexError) as exc:
-        print(f"kit codex: {exc}", file=sys.stderr)
+        before = sys.argv[1:sys.argv.index("--")] if "--" in sys.argv else sys.argv[1:]
+        message = ("audit could not complete; error details suppressed because configuration errors may contain secrets. "
+                   "Check the kit name, options and Codex configuration." if "audit" in before else str(exc))
+        print(f"kit codex: {message}", file=sys.stderr)
         raise SystemExit(1)
     except KeyboardInterrupt:
         raise SystemExit(130)

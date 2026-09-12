@@ -79,7 +79,7 @@ class CodexRPC:
 
     def __enter__(self):
         try:
-            self.request("initialize", {
+            self.info = self.request("initialize", {
                 "clientInfo": {"name": "kogitsune", "version": "0.1.0"},
                 "capabilities": {"experimentalApi": True},
             })
@@ -132,3 +132,51 @@ def discover(executable: str, cwd: str, overrides: list[str]) -> tuple[list, dic
     if len({s["path"] for s in skills}) != len(skills):
         raise CodexError("Codex returned duplicate skill paths; cannot verify selection unambiguously")
     return skills, config.get("config", {})
+
+
+def inspect_runtime(executable: str, cwd: str, overrides: list[str]) -> dict:
+    """Read metadata only. Never connect MCP servers, run hooks, or open a turn.
+
+    Optional APIs vary by CLI version. Keep their failures as unknown instead of
+    printing server errors, which may contain configuration or credential values.
+    """
+    snapshot = {}
+    with CodexRPC(executable, cwd, overrides) as client:
+        snapshot["codex_home"] = client.info.get("codexHome")
+        snapshot["configuration"] = client.request(
+            "config/read", {"cwd": cwd, "includeLayers": True})
+        if not isinstance(snapshot["configuration"].get("config"), dict):
+            raise CodexError("Codex returned no configuration for audit")
+        for key, method, params in (
+            ("requirements", "configRequirements/read", {}),
+            ("hooks", "hooks/list", {"cwds": [cwd]}),
+            ("plugins", "plugin/list", {"cwds": [cwd], "forceRefetch": False,
+                                        "marketplaceKinds": ["local"]}),
+        ):
+            try:
+                snapshot[key] = client.request(method, params)
+            except CodexError:
+                snapshot[key] = None
+        hooks = snapshot["hooks"]
+        if (not isinstance(hooks, dict) or not isinstance(hooks.get("data"), list)
+                or len(hooks["data"]) != 1 or hooks["data"][0].get("cwd") != cwd
+                or not isinstance(hooks["data"][0].get("hooks"), list)):
+            snapshot["hooks"] = None
+        if not isinstance(snapshot["plugins"], dict) or not isinstance(snapshot["plugins"].get("marketplaces"), list):
+            snapshot["plugins"] = None
+        if not isinstance(snapshot["requirements"], dict) or "requirements" not in snapshot["requirements"]:
+            snapshot["requirements"] = None
+        snapshot["plugin_details"] = {}
+        for marketplace in (snapshot.get("plugins") or {}).get("marketplaces", []):
+            if not marketplace.get("path"):
+                continue
+            for plugin in marketplace.get("plugins", []):
+                if not plugin.get("installed"):
+                    continue
+                try:
+                    detail = client.request("plugin/read", {
+                        "marketplacePath": marketplace["path"], "pluginName": plugin["name"]})
+                    snapshot["plugin_details"][plugin["id"]] = detail.get("plugin")
+                except CodexError:
+                    snapshot["plugin_details"][plugin["id"]] = None
+    return snapshot

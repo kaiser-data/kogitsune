@@ -242,6 +242,33 @@ connectors and plugin hooks continue to follow your normal Codex configuration.
 This is skill selection, not a whole-session isolation boundary: skills installed
 or discovered after startup are outside the verified inventory.
 
+Inspect a kit's surrounding configuration before launching:
+
+```sh
+kit codex audit lean
+kit codex audit python --json
+kit codex audit lean -- -C ./project --sandbox read-only
+```
+
+The audit verifies the selected skills and reports their source paths, inferred
+instruction files, configured permissions, MCP servers, local installed plugins,
+hook enablement and trust, and credential source names and locations. Plugin MCP
+servers and hooks remain visible even when none of that plugin's skills are
+selected. JSON also includes configuration layer paths and managed requirements.
+
+The report omits credential values, commands, server URLs, headers, prompts and
+instruction contents. Credential files are checked for presence without opening
+them. Audit failures suppress raw error details because configuration errors can
+contain secrets. Missing optional APIs are marked `unknown`; instruction files
+are inferred from filenames and size rather than the assembled prompt.
+
+Audit requests metadata without starting a model turn, connecting integrations or
+executing hooks. It does not rewrite kits or Codex configuration; the app server
+can still update its ordinary caches and runtime state. Configured settings and
+requested CLI flags are reported separately. Actual sandbox enforcement, network
+reachability, credential access and external service permissions remain unknown.
+Only local plugin catalogs are queried, so plugin coverage may be incomplete.
+
 `.kogitsune.yaml` in the effective launch directory overrides the base config.
 Saving writes to that overlay when present, otherwise to `kits.yaml`; it preserves
 Claude's section and comments, but reformats the Codex section. `--cd` and `-c`

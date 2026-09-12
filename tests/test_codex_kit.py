@@ -132,7 +132,8 @@ with open(os.environ['FAKE_CODEX_LOG'], 'a') as f:
 if not args or args[0] != 'app-server':
     sys.exit(int(os.environ.get('FAKE_EXIT', '0')))
 skills = json.loads(pathlib.Path(os.environ['FAKE_INVENTORY']).read_text())
-config = {}
+audit = json.loads(pathlib.Path(os.environ['FAKE_AUDIT']).read_text()) if os.environ.get('FAKE_AUDIT') else {}
+config = audit.get('config', {})
 for i, arg in enumerate(args):
     if arg == '-c':
         config.update(tomllib.loads(args[i + 1]))
@@ -144,8 +145,14 @@ for line in sys.stdin:
     msg = json.loads(line)
     if 'id' not in msg: continue
     method = msg['method']
-    if method == 'initialize': result = {'userAgent': 'fake/0.154.0'}
+    if os.environ.get('FAKE_RPC_LOG'):
+        with open(os.environ['FAKE_RPC_LOG'], 'a') as f: f.write(method + '\\n')
+    if method == 'initialize': result = {'userAgent': 'fake/0.154.0', 'codexHome': str(pathlib.Path.cwd() / '.codex')}
     elif method == 'config/read': result = {'config': config}
+    elif method == 'configRequirements/read': result = audit.get('requirements', {'requirements': None})
+    elif method == 'hooks/list': result = audit.get('hooks', {'data': [{'cwd': os.getcwd(), 'hooks': [], 'errors': [], 'warnings': []}]})
+    elif method == 'plugin/list': result = audit.get('plugins', {'marketplaces': []})
+    elif method == 'plugin/read': result = {'plugin': audit.get('plugin_detail', {})}
     elif method == 'skills/list':
         result = {'data': [{'cwd': msg['params']['cwds'][0], 'skills': skills, 'errors': []}]}
     else:
@@ -332,3 +339,50 @@ def test_picker_save_reads_and_writes_nonseekable_terminal(codexkit, monkeypatch
     result = picker.pick_skills([skill("local")], {"selected": []}, ["local"])
     assert result == (["local"], "my-kit")
     assert "Save Codex kit as:" in writer.getvalue()
+
+
+def test_audit_cli_is_read_only_and_never_prints_secret_values(fake_cli):
+    data = fake_cli[2].parent / "audit.json"
+    data.write_text(json.dumps({"config": {"mcp_servers": {"db": {
+        "command": "echo MCP_COMMAND_SECRET", "env": {"DB_PASSWORD": "MCP_ENV_SECRET"},
+        "http_headers": {"Authorization": "MCP_HEADER_SECRET"}}}}}))
+    fake_cli[0].update(FAKE_AUDIT=str(data), TEST_API_TOKEN="ENV_VALUE_SECRET",
+                       FAKE_RPC_LOG=str(data.parent / "rpc.log"))
+    before = fake_cli[2].read_bytes()
+    result = run_kit(fake_cli, "audit", "python", "--json", "--", "-s", "read-only")
+    assert result.returncode == 0, result.stderr
+    report = json.loads(result.stdout)
+    assert report["read_only"] is True
+    assert report["permissions"]["sandbox_mode"]["cli_requested"] == "read-only"
+    assert "argv" not in report
+    assert "TEST_API_TOKEN" in result.stdout and "DB_PASSWORD" in result.stdout
+    for secret in ("MCP_COMMAND_SECRET", "MCP_ENV_SECRET", "MCP_HEADER_SECRET", "ENV_VALUE_SECRET"):
+        assert secret not in result.stdout + result.stderr
+    assert fake_cli[2].read_bytes() == before
+    methods = Path(fake_cli[0]["FAKE_RPC_LOG"]).read_text().splitlines()
+    assert set(methods) <= {"initialize", "initialized", "config/read", "skills/list",
+                           "configRequirements/read", "hooks/list", "plugin/list", "plugin/read"}
+    assert all(json.loads(s)["args"][0] == "app-server" for s in fake_cli[1].read_text().splitlines())
+
+
+def test_audit_plain_text_default(fake_cli):
+    result = run_kit(fake_cli, "audit", "python")
+    assert result.returncode == 0, result.stderr
+    assert "Codex audit" in result.stdout and "Credential sources" in result.stdout
+    assert "unknown" in result.stdout
+
+
+@pytest.mark.parametrize("args", [["--unknown=BAD_OPTION_SECRET"], ["-p", "BAD_PROFILE_SECRET"]])
+def test_audit_option_errors_are_redacted(fake_cli, args):
+    result = run_kit(fake_cli, "audit", "python", "--", *args)
+    assert result.returncode != 0
+    assert "BAD_OPTION_SECRET" not in result.stderr
+    assert "BAD_PROFILE_SECRET" not in result.stderr
+    assert not fake_cli[1].exists()
+
+
+def test_audit_yaml_errors_are_redacted(fake_cli):
+    fake_cli[2].write_text('codex: [\n  password: "YAML_SECRET"\n')
+    result = run_kit(fake_cli, "audit", "python", "--json")
+    assert result.returncode != 0
+    assert "YAML_SECRET" not in result.stderr

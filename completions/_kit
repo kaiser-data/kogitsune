@@ -18,7 +18,7 @@ _kit() {
   if [[ "${words[2]}" == codex ]] && (( CURRENT > 2 )); then
     kits=(${(f)"$(kit codex __kits 2>/dev/null)"})
     _describe -t kits 'Codex kit' kits
-    _values 'Codex command or flag' ls show tune save help --dry-run --
+    _values 'Codex command or flag' ls show audit tune save help --dry-run --json --
     return
   fi
   kits=(${(f)"$(kit __kits 2>/dev/null)"})
