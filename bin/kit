@@ -18,6 +18,8 @@
 #                        [--probe-model M] measure on a specific model (default haiku)
 #   kit <name> --strict  refuse to launch if any reference is unresolved
 #   kit doctor           check deps, config, auth
+#   kit codex [name]     select individual Codex skills; omit name for the picker
+#   kit codex help       Codex presets, inspection, saving and launch options
 #   kit help
 set -euo pipefail
 
@@ -752,6 +754,7 @@ EOF
 main() {
   local cmd="${1:-}"
   case "$cmd" in
+    codex)                 shift; need python3; exec "$PY" "$LIB/codex-kit.py" --config-path "$CONFIG" "$@" ;;
     "")                    cmd_picker ;;
     pick|picker|tune)      shift; cmd_picker "$@" ;;
     ls|list)               cmd_ls ;;
@@ -763,7 +766,7 @@ main() {
     doctor)                cmd_doctor ;;
     help|-h|--help)        awk 'NR>1 && /^#/{sub(/^# ?/,"");print;next} NR>1{exit}' "$0" ;;
     __kits)                bc --list 2>/dev/null | jq -r '.kits|keys[]' 2>/dev/null ;;
-    __commands)            printf '%s\n' ls for show save rm measure tune doctor help ;;
+    __commands)            printf '%s\n' ls for show save rm measure tune doctor codex help ;;
     __tune_rows)           shift; cmd_tune_rows "$@" ;;
     __tune_toggle)         shift; cmd_tune_toggle "$@" ;;
     __tune_presets)        shift; cmd_tune_presets "$@" ;;

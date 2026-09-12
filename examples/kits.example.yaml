@@ -2,6 +2,18 @@
 # Copy to ../kits.yaml and edit. The fox merges MCP server definitions from
 # ~/.claude/mcp-on-demand.json by name, so you only reference them here.
 
+# Independent Codex skill presets: `kit codex`, `kit codex python`.
+# Names come from `kit codex ls`. Python/frontend require the installed ECC plugin.
+# Keep pinned small. Enabled system/admin/project skills are retained automatically.
+codex:
+  pinned: []
+  kits:
+    lean: { skills: [] }
+    python: { skills: [ecc:python-patterns, ecc:python-testing] }
+    frontend: { skills: [ecc:frontend-patterns, ecc:frontend-a11y] }
+    debug:
+      skills: [superpowers:systematic-debugging, superpowers:verification-before-completion]
+
 # Always rides along — never a toggle.
 # repack is pinned deliberately: it is the escape hatch for a wrong pack, so it has to
 # be present *before* you know you need it. A catalog entry cannot do that — acquiring

@@ -12,8 +12,15 @@ _kit() {
     'measure:probe a kit and record real ctx tokens'
     'tune:open the picker pre-loaded with a kit, then add/drop items'
     'doctor:check deps, config, auth'
+    'codex:select Codex skills and launch a Codex session'
     'help:show usage'
   )
+  if [[ "${words[2]}" == codex ]] && (( CURRENT > 2 )); then
+    kits=(${(f)"$(kit codex __kits 2>/dev/null)"})
+    _describe -t kits 'Codex kit' kits
+    _values 'Codex command or flag' ls show tune save help --dry-run --
+    return
+  fi
   kits=(${(f)"$(kit __kits 2>/dev/null)"})
 
   if (( CURRENT == 2 )); then

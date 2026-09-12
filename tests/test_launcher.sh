@@ -283,7 +283,8 @@ grep -q "preset" <<<"$rows" && ok "ctrl-p shows presets again" || no "presets di
 "$ROOT/bin/kit" __tune_model "$TD"; "$ROOT/bin/kit" __tune_model "$TD"
 [[ "$(cat "$TD/model")" == "haiku" ]] && ok "ctrl-o: sonnet→opus→haiku" || no "cycle3: $(cat "$TD/model")"
 "$ROOT/bin/kit" __tune_model "$TD"; [[ -z "$(cat "$TD/model")" ]] && ok "ctrl-o: haiku→default wraps" || no "cycle wrap: $(cat "$TD/model")"
-printf '%s\n' "$("$ROOT/bin/kit" __tune_preview "$TD" 2>/dev/null)" | grep -q "model:  default" && ok "preview shows the model" || no "preview model line missing"
+# Avoid an intermittent SIGPIPE from grep -q closing a pipe under pipefail.
+grep -q "model:  default" <<<"$("$ROOT/bin/kit" __tune_preview "$TD" 2>/dev/null)" && ok "preview shows the model" || no "preview model line missing"
 rm -rf "$TD"
 
 # preset model adoption: loading a 🦊 preset adopts its model UNLESS the user cycled (ctrl-o)

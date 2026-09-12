@@ -5,7 +5,14 @@ _kit() {
   local cur prev cmds kits
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
-  cmds="ls show save rm measure tune doctor help"
+  cmds="ls show save rm measure tune doctor codex help"
+
+  if [[ ${COMP_WORDS[1]:-} == codex && ${COMP_CWORD} -ge 2 ]]; then
+    kits="$(kit codex __kits 2>/dev/null)"
+    # shellcheck disable=SC2207
+    COMPREPLY=( $(compgen -W "${kits} ls show tune save help --dry-run --" -- "${cur}") )
+    return
+  fi
 
   if [[ ${COMP_CWORD} -eq 1 ]]; then
     kits="$(kit __kits 2>/dev/null)"

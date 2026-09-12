@@ -12,13 +12,14 @@
 
 # kogitsune 🦊
 
-### Start every [Claude Code](https://code.claude.com) session lean — then pack in *exactly* the skills + MCP your task needs.
+### Start lean in [Claude Code](https://code.claude.com) or [Codex CLI](https://developers.openai.com/codex/cli/) — pick the skills your task needs.
 
 One keystroke. Memory always rides along. Everything else is a choice.
 
 ```bash
 kit db      # 🦊 off you go: memory + guardrails + supabase + postgres — nothing else
 kit         # …or open the picker, toggle what you want, watch the token cost live
+kit codex   # choose individual Codex skills, including skills inside large plugins
 ```
 
 </div>
@@ -26,6 +27,9 @@ kit         # …or open the picker, toggle what you want, watch the token cost 
 ---
 
 ## Why you'll love it
+
+**Using Codex?** Start with [Codex skill kits](#codex-skill-kits). The Claude launcher
+and its MCP/memory behavior are described below; the Codex adapter manages skills.
 
 - ⚡ **Lighter sessions, more room to work.** Stop paying for every installed skill and MCP schema on a
   *"hello"*. Pack a focused kit and keep the context window for the actual task.
@@ -176,6 +180,87 @@ kit without touching your global config.
 **Requires:** `claude` CLI, `python3` + `PyYAML`, `jq`, and `fzf` (for the picker only).
 **Auth:** uses your existing Claude login — credentials are copied into the session mirror (mode `600`)
 and deleted on exit, or set `ANTHROPIC_API_KEY` to skip the copy entirely.
+
+## Codex skill kits
+
+Codex limits the size of its initial skills catalog and can shorten descriptions
+or omit skills when too many are installed. Kogitsune selects individual skills
+before launching Codex, including skills inside plugins such as ECC and Superpowers.
+
+```bash
+kit codex                         # choose a preset, then toggle individual skills
+kit codex lean                    # enabled system/admin/project skills only
+kit codex python                  # focused Python preset (requires ECC)
+kit codex tune python             # adjust it; tab toggles, ctrl-s saves a new kit
+kit codex ls                      # installed skill names, enabled states and descriptions
+kit codex show python             # verified selection and launch argv as JSON
+kit codex python --dry-run        # same inspection; no model turn
+kit codex python -- -C ./project "fix the failing test"
+kit codex save mine --skills ecc:python-patterns,ecc:python-testing
+```
+
+Use the `codex:` section of `kits.yaml`, separate from Claude's presets:
+
+```yaml
+codex:
+  pinned: []                      # optional skill names to keep in every kit
+  kits:
+    lean: { skills: [] }
+    python: { skills: [ecc:python-patterns, ecc:python-testing] }
+    debug-python:
+      extends: python
+      skills: ["+superpowers:systematic-debugging"]
+```
+
+`lean` is available even without a `codex:` section. Other example presets require
+the corresponding installed plugins. Use the exact names from `kit codex ls`;
+ambiguous names require the plugin-qualified selector or file path printed there.
+Only skills Codex discovers in that working directory appear; enable a disabled
+plugin in Codex first if you want to select skills from it.
+Named selectors resolve to current paths at launch, so plugin version updates
+do not normally require editing your kits. Optional `model:` uses a Codex model ID;
+an explicit forwarded `--model` or `-c model=...` wins.
+
+The picker starts with the preset's skills selected. **Tab** toggles a skill,
+typing searches names/descriptions, **ctrl-a** selects all, **ctrl-d** clears the
+selection, **enter** launches, and **esc** cancels. **Ctrl-s** asks for a kit name,
+saves, and launches. Enabled system/admin/project skills and pins stay on and
+are excluded from the toggle list. The count in the fzf status line shows the
+optional selection. `show` includes every selected and excluded skill and the
+reason it was retained. It reports counts, not Claude token-weight estimates.
+
+The adapter reads Codex's effective skill inventory using a short-lived local
+app server, applies per-invocation `skills.config` overrides, then checks a second
+inventory to confirm every enabled state before launching. Discovery and dry runs
+do not create a model turn. Codex's app server still uses its normal local runtime
+database and may perform its usual startup refreshes.
+
+Your Codex home, login, instructions and session history stay in place. Kogitsune
+does not rewrite Codex configuration. Existing disabled skills stay disabled unless
+explicitly selected; enabled system/admin/repository skills are retained. MCP,
+connectors and plugin hooks continue to follow your normal Codex configuration.
+This is skill selection, not a whole-session isolation boundary: skills installed
+or discovered after startup are outside the verified inventory.
+
+`.kogitsune.yaml` in the effective launch directory overrides the base config.
+Saving writes to that overlay when present, otherwise to `kits.yaml`; it preserves
+Claude's section and comments, but reformats the Codex section. `--cd` and `-c`
+overrides apply during discovery as well as launch. This first adapter supports
+interactive CLI launches; profiles, remote sessions, managed worktrees and Codex subcommands
+such as `exec`/`resume` are not supported. Run `kit codex help` for supported flags.
+It does not change skills in an already running desktop app.
+
+Codex 0.154.0 rejects `--profile` for `app-server`, and the legacy `-c profile=...`
+setting is also rejected. Kogitsune therefore rejects profile selection explicitly;
+use individual `-c` overrides until Codex exposes profiles to the inventory API.
+
+**Requires:** Codex CLI with `app-server` and `skills/list` (verified on **0.154.0**),
+Python 3 + PyYAML, and fzf for the picker. Codex commands do not require Claude or jq.
+`KOGITSUNE_CODEX` can select an alternate Codex executable. See the official
+[skill documentation](https://developers.openai.com/codex/skills) for catalog limits
+and the [configuration reference](https://developers.openai.com/codex/config-reference)
+for skill controls. With the tested CLI, overrides must reference `SKILL.md` itself;
+folder paths silently fail to disable skills, which is why Kogitsune verifies them.
 
 ## Defining a kit
 
